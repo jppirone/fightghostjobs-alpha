@@ -1,20 +1,17 @@
 // ============================================================================================================
 // ALPHA ONLY - js/alpha-gate.js - a crude, deliberate deterrent for alpha.fightghostjobs.com. NOT security.
 //
-// It stops someone who stumbles on the alpha address from browsing the pilot's sample and test employer data.
-// Anyone who reads this file can see the password; that is accepted. It is a classic (non-module) script loaded
-// in the <head> of every page so the page stays hidden until the password is given once per browser (localStorage).
-//
-// This is the same mechanism as stage's js/stage-gate.js, adapted for this second, still-private environment
-// (not a public launch). As a second guard it does nothing unless the page is served from the alpha host
-// (HOST below).
+// It stops someone who stumbles on the alpha address from browsing the pilot's sample and test employer data. The password itself is NOT in this file: only a salted
+// PBKDF2-SHA256 hash of it (310000 rounds), so reading this file does not reveal it. It is a classic (non-module) script loaded in the <head> of every page so the page
+// stays hidden until the password is given once per browser (localStorage). As a second guard it does nothing unless the page is served from the alpha host (HOST below).
 // ============================================================================================================
 (function () {
   "use strict";
-  var HOST = "alpha.fightghostjobs.com", KEY = "fgj_alpha_gate", PASSWORD = "FGJAlphaPilot!";
+  var HOST = "alpha.fightghostjobs.com", KEY = "fgj_alpha_gate", SALT = "UyipNuN6xRITENPL/6e+Uw==", HASH = "zxrC34IgwkGcF7DkxW/ZkY9zLFAtvYecGV8l6nl3tg0=", ITER = 310000, TAG = KEY + "_v", VER = HASH.slice(0, 16);
   if (location.hostname !== HOST) return;
   var open = false;
-  try { open = localStorage.getItem(KEY) === "open"; } catch (e) { open = false; }
+  // unlocked only if it was unlocked with THIS password: a browser that entered an older password is asked again
+  try { open = localStorage.getItem(KEY) === "open" && localStorage.getItem(TAG) === VER; } catch (e) { open = false; }
   if (open) return;
 
   var root = document.documentElement;
@@ -30,6 +27,14 @@
   (document.head || root).appendChild(style);
 
   function el(tag, text) { var n = document.createElement(tag); if (text) n.textContent = text; return n; }
+  function fromB64(s) { var bin = atob(s), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+  function toB64(buf) { var a = new Uint8Array(buf), s = ""; for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s); }
+  function matches(pw) {
+    if (!window.crypto || !window.crypto.subtle) return Promise.reject(new Error("no crypto"));
+    return window.crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveBits"]).then(function (k) {
+      return window.crypto.subtle.deriveBits({ name: "PBKDF2", salt: fromB64(SALT), iterations: ITER, hash: "SHA-256" }, k, 256);
+    }).then(function (bits) { return toB64(bits) === HASH; });
+  }
 
   function build() {
     if (document.getElementById("alphaGate")) return;
@@ -37,20 +42,23 @@
     var label = el("label", "Password"); label.htmlFor = "alphaGatePassword";
     var input = el("input"); input.type = "password"; input.id = "alphaGatePassword"; input.required = true;
     var msg = el("p"); msg.className = "gate-msg";
+    var button = el("button", "Continue");
     form.appendChild(el("h1", "FightGhostJobs alpha"));
     form.appendChild(el("p", "This is a private pilot environment. It holds sample and test data, not the registry. Enter the password to continue."));
-    form.appendChild(label); form.appendChild(input); form.appendChild(el("button", "Continue")); form.appendChild(msg);
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      if (input.value === PASSWORD) {
-        try { localStorage.setItem(KEY, "open"); } catch (e2) { /* the page opens for this load anyway */ }
-        root.removeAttribute("data-alpha-gate");
-        form.parentNode.removeChild(form);
-      } else {
-        msg.textContent = "That is not the password.";
-        input.value = "";
-        input.focus();
-      }
+    form.appendChild(label); form.appendChild(input); form.appendChild(button); form.appendChild(msg);
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      button.disabled = true; msg.textContent = "Checking...";
+      matches(input.value).then(function (ok) {
+        if (ok) {
+          try { localStorage.setItem(KEY, "open"); localStorage.setItem(TAG, VER); } catch (e2) { /* the page opens for this load anyway */ }
+          root.removeAttribute("data-alpha-gate");
+          form.parentNode.removeChild(form);
+        } else {
+          msg.textContent = "That is not the password.";
+          input.value = ""; button.disabled = false; input.focus();
+        }
+      }, function () { msg.textContent = "This page must be opened over https."; button.disabled = false; });
     });
     document.body.appendChild(form);
     input.focus();
