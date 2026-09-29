@@ -1,0 +1,91 @@
+/* app.css - everything the wired site needs that the reference build (styles.css, unchanged) did not have.
+   Same tokens, same look: only states the design never had to show (errors, disabled buttons, the sign-in card, focus rings). */
+
+[hidden]{display:none!important}
+a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,.info-icon:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+button[disabled],.btn[disabled]{opacity:.55;cursor:not-allowed}
+input[type="text"],input[type="email"],input[type="number"]{border:1px solid var(--line);border-radius:8px;padding:11px 14px;font-size:14px;width:100%;font-family:'Work Sans',sans-serif;background:#fff;color:var(--ink)}
+textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:11px 14px;font-size:14px;font-family:'Work Sans',sans-serif;resize:vertical;background:#fff;color:var(--ink)}
+input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:var(--ember-dark)}
+.field-hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5}
+.field-error{font-size:12px;font-weight:600;color:var(--ember-dark);margin-top:6px}
+
+.alert{border-radius:10px;padding:12px 16px;font-size:14px;line-height:1.6}
+.alert-error{background:#FCE7DE;color:var(--ember-dark);border:1px solid #F3C7B4}
+.alert-notice{background:var(--panel);color:var(--muted)}
+.alert-ok{background:#E5F3EC;color:var(--verified)}
+
+/* analytics dashboard (pass 24): same tokens as everywhere else, carried over from the design mock (fightghostjobs-web/analytics.html) */
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px}
+.kpi .num{font-size:32px;font-weight:700;font-family:'Space Grotesk',sans-serif}
+.kpi .lbl{font-size:13px;color:var(--muted);margin-top:6px}
+.bar-track{background:var(--panel);border-radius:5px;height:8px;width:100%;overflow:hidden}
+.bar-fill{background:var(--ember);height:100%;border-radius:5px}
+.bar-fill-alt{background:var(--verified);height:100%;border-radius:5px}
+.eyebrow{font-size:13px;font-weight:700;color:var(--ember);text-transform:uppercase;letter-spacing:.08em}
+
+.signin-card{max-width:560px}
+.signin-card h2{font-size:22px;font-weight:700;margin-bottom:8px}
+.signin-card p{font-size:14px;line-height:1.6;color:var(--muted);margin:0 0 18px 0}
+.signin-row{display:flex;gap:12px;align-items:flex-end}
+.signin-row>div{flex:1}
+
+.check-row{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;margin:0}
+.check-row input{width:auto}
+.toggle:focus-visible{outline:2px solid var(--ember);outline-offset:3px}
+
+/* a wider info-tooltip for a title line + bullet list (search field help); same component, same hover/focus trigger, just more room.
+   text-transform:none guards against sitting inside an uppercase field label (search.html's column labels are all-caps; the tooltip body must not inherit that). */
+.info-tooltip-wide{width:280px;text-transform:none}
+.info-tooltip .tip-title{display:block;margin-bottom:6px;font-weight:700}
+.info-tooltip ul{margin:0;padding-left:16px}
+.info-tooltip li+li{margin-top:6px}
+/* opens below the icon instead of above: for a field row close to the top of the page, opening upward can push the tooltip off-screen */
+.info-tooltip-down{bottom:auto;top:calc(100% + 9px)}
+.info-tooltip-down::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:var(--ink)}
+
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(23,20,18,.45);align-items:center;justify-content:center;z-index:50}
+.modal-backdrop.open{display:flex}
+.modal{background:#fff;border-radius:16px;width:480px;max-width:92vw;max-height:80vh;overflow-y:auto;padding:32px}
+.source-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border-radius:10px;padding:14px 16px;margin-top:10px;cursor:pointer;border:none;width:100%;text-align:left;font-family:inherit;color:var(--ink)}
+.source-row .go{font-size:13px;font-weight:700;color:var(--ember)}
+.source-row-label{font-size:14px;font-weight:600}
+.empty-note{font-size:14px;color:var(--muted);line-height:1.6;background:var(--panel);border-radius:10px;padding:14px 16px;margin-top:16px}
+.result-count{font-size:13px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.code-box{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;letter-spacing:.06em;background:var(--panel);border-radius:10px;padding:14px 18px;display:inline-block}
+.nav-account+.btn{margin-left:14px}
+
+/* location picker (register form) */
+.loc-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.loc-chips:empty{display:none;margin:0}
+.loc-chip{display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 5px 4px 12px;font-size:13px;font-weight:600}
+.loc-remove{border:none;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;border-radius:999px;width:22px;height:22px;padding:0;font-family:inherit}
+.loc-remove:hover{background:var(--line);color:var(--ink)}
+.loc-remove:focus-visible{outline:2px solid var(--ember);outline-offset:1px}
+.loc-remove[disabled]{cursor:not-allowed;opacity:.55}
+.loc-combo{position:relative}
+.loc-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;margin:0;padding:4px;list-style:none;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(23,20,18,.12);max-height:320px;overflow-y:auto}
+.loc-list li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 12px;border-radius:6px;font-size:14px;cursor:pointer}
+.loc-list li[aria-selected="true"],.loc-list li:hover{background:var(--panel)}
+.loc-tag{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+#locStatus:empty{display:none}
+
+/* dashboard row actions and dialogs */
+.row-action{background:none;border:none;padding:0;margin-left:14px;font-family:inherit;font-size:13px;font-weight:600;color:var(--ember);cursor:pointer}
+.row-action:hover{text-decoration:underline}
+a.row-action{display:inline-block;text-decoration:none}
+a.row-action:hover{text-decoration:underline}
+.row-action:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+.row-note{font-size:12px;font-weight:400;color:var(--faint);margin-top:3px}
+.radio-row{display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:14px;font-weight:500;cursor:pointer}
+.radio-row input{width:auto;margin-top:3px}
+
+.dash-table th{padding:13px 12px}
+.dash-table td{padding:14px 12px}
+.dash-table .row-action:first-child{margin-left:0}
+
+/* the footer every page carries: the privacy page and the privacy contact (tests/site-check.js S22) */
+.site-footer{max-width:1440px;margin:0 auto;padding:28px 32px;border-top:1px solid var(--line);display:flex;gap:24px;align-items:center;font-size:13px;color:var(--faint)}
+.site-footer a{color:var(--faint)}
+.privacy-h{font-size:19px;font-weight:700;margin-top:12px}
+.privacy-p{font-size:15px;line-height:1.7;color:#4A453F;margin:0}
