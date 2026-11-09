@@ -2,9 +2,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fmtDate, fmtStamp, fmtDateTz, fmtClose, tzLabel, groupCode, locationLine, initials, plural, waitText } from "../js/format.js";
-import { postingChips, aiFilteringChip, aiInterviewChip, statusChips, notOpenMessage, TOOLTIP_FILTERING, TOOLTIP_INTERVIEW } from "../js/chips.js";
+import { postingChips, aiFilteringChip, aiInterviewChip, statusChips, notOpenMessage, notOpenHeading, notOpenComments, notOpenRecap, TOOLTIP_FILTERING, TOOLTIP_INTERVIEW } from "../js/chips.js";
 import { classifyQuery, checkCompany, normalizeCode, noMatchMessage, NO_MATCH_NOTE } from "../js/search-input.js";
-import { checkReq, resolveSearch, noMatchMessage as noMatchMsg, NO_MATCH_NOTE_REQ } from "../js/search-input.js";
+import { checkReq, resolveSearch, noMatchMessage as noMatchMsg, NO_MATCH_NOTE_REQ, PHRASE_TOO_SHORT_MESSAGE, searchErrorMessage, searchErrorFocus } from "../js/search-input.js";
 import { isDuplicateReq } from "../js/register-form.js";
 import { validateForm, buildCreateBody, mapServerErrors, MIN_WINDOW_DAYS, MAX_WINDOW_DAYS, collectLinks, linksOutcome, collectFirms, firmsOutcome } from "../js/register-form.js";
 
@@ -43,8 +43,8 @@ test("location line: remote, places, neither", () => {
 
 test("small helpers", () => {
   assert.equal(initials("John Pirone"), "JP"); assert.equal(initials("cher"), "C"); assert.equal(initials(""), "?");
-  assert.equal(plural(1, "posting", "postings"), "1 posting"); assert.equal(plural(2, "posting", "postings"), "2 postings");
-  assert.equal(waitText(45), "45 seconds"); assert.equal(waitText(1), "1 second"); assert.equal(waitText(600), "10 minutes"); assert.equal(waitText(undefined), "1 second");
+  assert.equal(plural(1, "opening", "openings"), "1 opening"); assert.equal(plural(2, "opening", "openings"), "2 openings");
+  assert.equal(waitText(45), "45 seconds"); assert.equal(waitText(1), "1 second"); assert.equal(waitText(600), "10 minutes"); assert.equal(waitText(7140), "119 minutes"); assert.equal(waitText(7200), "2 hours"); assert.equal(waitText(21510), "6 hours"); assert.equal(waitText(3600 * 24), "24 hours"); assert.equal(waitText(3601 + 3600), "3 hours"); assert.equal(waitText(undefined), "1 second");
 });
 
 test("the two AI disclosures are independent, worded exactly as designed, and null is said plainly", () => {
@@ -55,23 +55,23 @@ test("the two AI disclosures are independent, worded exactly as designed, and nu
   assert.deepEqual(aiInterviewChip(false), { text: "No AI interview/other", tooltip: TOOLTIP_INTERVIEW });
   assert.equal(aiInterviewChip(undefined).text, "AI interview/other not disclosed");
   assert.match(TOOLTIP_FILTERING, /^Resume screening or keyword\/ATS-style matching used to prioritize applications before a human reviews them\.$/);
-  assert.match(TOOLTIP_INTERVIEW, /^Any AI that interacts with a candidate directly — an AI-conducted interview, a chatbot screening call, or similar\.$/);
+  assert.match(TOOLTIP_INTERVIEW, /^Any AI that interacts with a candidate directly, such as an AI-conducted interview or a chatbot screening call\.$/);
   assert.doesNotMatch(TOOLTIP_FILTERING + TOOLTIP_INTERVIEW, /reject/i);   // design brief 12: the tooltip describes the mechanism, never an outcome
 });
 
 const base = { company_name: "Meridian", title: "Senior Data Analyst", locations: ["Remote"], is_remote: true, posted_at: "2026-09-02T12:00:00Z", closes_at: "2026-10-17T12:00:00Z", applicant_cap: 250,
   status: "live", closed_reason: null, ai_filtering: false, ai_interview_other: false, ai_disclosure_shown: false, third_party_recruiter: false, masked_code: "****-****-QBF1", masked_req: "R****0", posting_ref: "a".repeat(20), last_edited_at: null };
 
-test("a live posting's chips, in the designed order", () => {
+test("a live opening's chips, in the designed order", () => {
   const t = postingChips(base, "UTC").map((c) => c.text);
-  assert.deepEqual(t, ["Posted Sep 2 (UTC)", "Closes Oct 17, 12:00 PM UTC", "No AI filtering", "No AI interview/other", "No recruiter", "Capped at 250 applicants"]);
+  assert.deepEqual(t, ["Added Sep 2 (UTC)", "Closes Oct 17, 12:00 PM UTC", "No AI filtering", "No AI interview/other", "No recruiter", "Capped at 250 applicants"]);
   assert.equal(postingChips(base, "UTC")[1].bold, true);
 });
 
 test("cap, recruiter and last-edited variants", () => {
   const p = Object.assign({}, base, { applicant_cap: null, third_party_recruiter: true, ai_filtering: true, last_edited_at: "2026-09-20T09:00:00Z" });
   const t = postingChips(p, "UTC").map((c) => c.text);
-  assert.ok(t.includes("No applicant cap set")); assert.ok(t.includes("Third-party recruiter involved")); assert.ok(t.includes("AI-assisted filtering")); assert.ok(t.includes("Edited Sep 20 (UTC)"));
+  assert.ok(t.includes("No applicant cap set")); assert.ok(t.includes("Recruiter involved")); assert.ok(!t.includes("Third-party recruiter involved")); assert.ok(t.includes("AI-assisted filtering"));   // prompt LK (October 23, 2026): the recruiter pill with the switch on and no firm named now reads "Recruiter involved" (the employer's own toggle keeps its label "Third-party recruiter involved") assert.ok(t.includes("Edited Sep 20 (UTC)"));
 });
 
 test("status wording for every state a candidate can be shown", () => {
@@ -84,6 +84,18 @@ test("status wording for every state a candidate can be shown", () => {
   assert.equal(statusChips(Object.assign({}, base, { status: "closed", closed_reason: "withdrawn" }), "UTC")[0].text, "Closed · Withdrawn");
   assert.match(notOpenMessage("closed", "filled"), /filled/); assert.match(notOpenMessage("closed", "withdrawn"), /withdrew/);
   assert.match(notOpenMessage("expired", "expired_no_action"), /no action/); assert.match(notOpenMessage("paused", null), /paused/);
+});
+
+test("the not-open comments page: a paused opening gets its own heading and the short sentence; closed, expired and every other status keep the long wording", () => {
+  const LONG = "Comments stay open: what happened after it closed is exactly what other candidates want to know.";
+  assert.equal(notOpenHeading("paused"), "This opening is paused"); assert.equal(notOpenComments("paused"), "Comments stay open.");
+  for (const s of ["closed", "expired", "live", "draft", undefined, null, ""]) { assert.equal(notOpenHeading(s), "This opening is no longer open"); assert.equal(notOpenComments(s), LONG); }
+  const paused = notOpenRecap("paused", null);
+  assert.deepEqual(paused, { company: "Opening", title: "This opening is paused", note: "This opening is paused. The employer has paused it, so it is not accepting applicants right now. Comments stay open." });
+  assert.equal(notOpenRecap("closed", "filled").note, "This opening is closed: the employer reports the role was filled. " + LONG);
+  assert.equal(notOpenRecap("expired", "expired_no_action").note, "This opening has expired with no action taken by the employer. " + LONG);
+  assert.equal(notOpenRecap("closed", "withdrawn").title, "This opening is no longer open"); assert.equal(notOpenRecap("weird").note, "This opening is not open. " + LONG);
+  assert.doesNotMatch(JSON.stringify([paused, notOpenRecap("closed", null)]), /so its links are not listed/);   // the option B sentence is not used
 });
 
 test("search company rule mirrors the backend (2+ letters/digits, 200 max)", () => {
@@ -102,20 +114,66 @@ test("one box, two meanings: a code (with a digit or grouped) versus a title", (
   assert.equal(w.kind, "phrase"); assert.equal(w.alsoTryCode, true);
   assert.equal(classifyQuery("Senior Receptionist").alsoTryCode, undefined);
   assert.equal(classifyQuery("").ok, false); assert.equal(classifyQuery("  ").ok, false);
-  assert.equal(classifyQuery("ab").ok, false); assert.equal(classifyQuery("a b").ok, false);
   assert.equal(classifyQuery("x".repeat(81)).ok, false);
-  assert.equal(classifyQuery("C++").ok, false);                        // fewer than 3 letters/digits
   assert.equal(classifyQuery("C++ Developer").kind, "phrase");
 });
 
-test("the empty-result message echoes exactly what was searched, then says closed or expired postings appear only by postID", () => {
-  assert.ok(NO_MATCH_NOTE.endsWith("Closed or expired postings appear only when you search by postID."));
+test("a short title (1 or 2 letters or digits) goes to the backend: it knows the short forms (VP, SR, JR); only the certainly refused is refused here", () => {
+  for (const short of ["vp", "VP", "sr", "Jr", "a", "7", "C++", "ab", "a b", "  vp  ", "V.P."]) {
+    const c = classifyQuery(short);
+    assert.equal(c.ok, true, short); assert.equal(c.kind, "phrase", short); assert.equal(c.value, short.trim(), short); assert.equal(c.alsoTryCode, undefined, short);
+  }
+  assert.deepEqual(resolveSearch("vp", ""), { ok: true, kind: "phrase", value: "vp" });         // through resolveSearch too (no second local check)
+  assert.deepEqual(resolveSearch(" Sr ", ""), { ok: true, kind: "phrase", value: "Sr" });
+  // still refused locally: nothing to search on, no letter or digit at all, over 80 characters
+  for (const bad of ["", "   ", null, undefined, "-", "++", "...", "- - -", "!!!", "—"]) { const c = classifyQuery(bad); assert.equal(c.ok, false, String(bad)); assert.ok(c.message.length > 0); }
+  assert.equal(classifyQuery("x".repeat(80)).ok, true);                                           // exactly 80 passes
+  assert.equal(classifyQuery("x ".repeat(40) + "y").ok, false);                                   // 81 characters
+  const over = classifyQuery("a".repeat(81)); assert.equal(over.ok, false); assert.match(over.message, /80 characters/);
+  assert.equal(resolveSearch("-", "").ok, false); assert.equal(resolveSearch("-", "").focus, "title");
+  assert.equal(resolveSearch("x".repeat(81), "").ok, false);
+  // the postID detection is exactly as before
+  assert.equal(classifyQuery("D21M-48YB-ZQBF").kind, "code"); assert.equal(classifyQuery("ABCD-EFGH-JKMN").kind, "code"); assert.equal(classifyQuery("D21M48YBZQBF").kind, "code");
+  const w = classifyQuery("Receptionist"); assert.equal(w.kind, "phrase"); assert.equal(w.alsoTryCode, true);
+  assert.equal(classifyQuery("Receptionis").alsoTryCode, undefined);                                // eleven letters: not a code shape
+  // no message the person can see still says the old "at least 3" local refusal
+  for (const bad of ["", "-", "x".repeat(81)]) assert.doesNotMatch(classifyQuery(bad).message, /at least 3/);
+});
+
+test("when the backend refuses a short title, the page says so calmly: a plain explanation, the short forms, the title box", () => {
+  const backend = { code: "bad_request", message: "phrase must contain at least 3 letters or digits (and be at most 80 characters)", field: "phrase" };
+  assert.equal(searchErrorMessage(backend), PHRASE_TOO_SHORT_MESSAGE);
+  assert.equal(PHRASE_TOO_SHORT_MESSAGE, "That part of the title is too short to search on its own. Use at least 3 letters or digits, or a short form like VP, SR or JR if the employer used one.");
+  assert.equal(searchErrorFocus(backend), "title");
+  assert.doesNotMatch(PHRASE_TOO_SHORT_MESSAGE, /—|backend|error|invalid|phrase/i);          // no jargon, no scolding, no em dash
+  // any other refusal keeps the backend's own words (or a plain default), and the cursor goes to the box it names
+  assert.equal(searchErrorMessage({ field: "company", message: "company must contain at least 2 letters or digits" }), "company must contain at least 2 letters or digits");
+  assert.equal(searchErrorMessage({ field: "phrase", message: "something else" }), "something else");
+  assert.equal(searchErrorMessage({ field: "req", message: null }), "That search was not accepted.");
+  assert.equal(searchErrorMessage(null), "That search was not accepted.");
+  assert.equal(searchErrorFocus({ field: "company" }), "company"); assert.equal(searchErrorFocus({ field: "req" }), "req"); assert.equal(searchErrorFocus({ field: "code" }), "title");
+  assert.equal(searchErrorFocus({ field: "other" }), null); assert.equal(searchErrorFocus(null), null);
+});
+
+test("the local messages for the lookup boxes name what to enter, and nothing says the opening does not exist", () => {
+  assert.equal(classifyQuery("").message, "Enter a KIO ID or part of the job title.");
+  assert.equal(classifyQuery("--").message, "Enter some letters or digits from the job title, or a KIO ID.");
+  assert.equal(classifyQuery("x".repeat(81)).message, "That title is too long (80 characters at most).");
+  assert.equal(resolveSearch("", "").message, "Enter a req number, a KIO ID or part of the job title.");
+  assert.equal(resolveSearch("7777-7777-7777", "R-1").message, "A KIO ID cannot be used with a req number. Fill in one or the other.");   // prompt HM: was ("Analyst", "R-1"), "Fill in the req number, or the KIO ID / title box, not both."
+  for (const n of [NO_MATCH_NOTE, NO_MATCH_NOTE_REQ]) assert.doesNotMatch(n, /does not exist|doesn't exist|no such|never existed|fake/i);
+});
+
+test("the empty-result message echoes exactly what was searched, then says closed or expired openings appear only by Opening ID", () => {
+  assert.ok(NO_MATCH_NOTE.endsWith("A title search finds only openings that are live: closed or expired openings are found only by KIO ID or req number."));
+  assert.ok(NO_MATCH_NOTE.includes("A missing opening may simply not be added; it says nothing about whether the job exists."));
+  assert.ok(NO_MATCH_NOTE.includes("check the KIO ID exactly as it is printed in the job ad") && NO_MATCH_NOTE.includes("try a different part of the title"));
   const m = noMatchMessage("Fight Ghost Jobs", "Senior Product Manager", "phrase");
-  assert.ok(m.startsWith("No postings found for \"Fight Ghost Jobs\" + \"Senior Product Manager\". "), m);
+  assert.ok(m.startsWith("No openings found for \"Fight Ghost Jobs\" + \"Senior Product Manager\". "), m);
   assert.ok(m.endsWith(NO_MATCH_NOTE));
-  assert.ok(noMatchMessage("Acme", "D21M-48YB-ZQBF", "code").startsWith("No postings found for \"Acme\" + code \"D21M-48YB-ZQBF\". "));
-  assert.ok(noMatchMessage("  Acme   Inc ", " a   b c ", "phrase").startsWith("No postings found for \"Acme Inc\" + \"a b c\". "));      // whitespace tidied
-  assert.ok(noMatchMessage("x".repeat(500), "y".repeat(500), "phrase").length < 500);                                                         // never echoes an unbounded string
+  assert.ok(noMatchMessage("Acme", "D21M-48YB-ZQBF", "code").startsWith("No openings found for \"Acme\" + code \"D21M-48YB-ZQBF\". "));
+  assert.ok(noMatchMessage("  Acme   Inc ", " a   b c ", "phrase").startsWith("No openings found for \"Acme Inc\" + \"a b c\". "));      // whitespace tidied
+  assert.ok(noMatchMessage("x".repeat(500), "y".repeat(500), "phrase").length - NO_MATCH_NOTE.length < 200);                                                      // never echoes an unbounded string
   assert.match(noMatchMessage("<b>x</b>", "<img src=x>", "phrase"), /<b>x<\/b>/);                                                              // plain text: the page inserts it as text, never as HTML
 });
 
@@ -202,11 +260,15 @@ test("resolveSearch: exactly one of the two boxes; each keeps its own rules; the
   assert.equal(resolveSearch("Data Analyst", "").kind, "phrase");
   assert.equal(resolveSearch("XXXX-XXXX-XXXX".replace(/X/g, "7"), "").kind, "code");
   assert.deepEqual(resolveSearch("", " FGJ-1234 "), { ok: true, kind: "req", value: "FGJ-1234" });
-  assert.deepEqual(resolveSearch("", "").focus, "title");
+  assert.deepEqual(resolveSearch("", "").focus, "req");                                    // the req number box is the first lookup box now
   assert.equal(resolveSearch("", "").ok, false);
-  const both = resolveSearch("Analyst", "R-1"); assert.equal(both.ok, false); assert.equal(both.focus, "req");
+  // prompt HM: a title next to a req number is the fallback (kind req, title kept); a KIO ID or a postID next to a req number is refused
+  assert.deepEqual(resolveSearch("Analyst", "R-1"), { ok: true, kind: "req", value: "R-1", title: "Analyst" });
+  const both = resolveSearch("7777-7777-7777", "R-1"); assert.equal(both.ok, false); assert.equal(both.focus, "req");
   assert.equal(resolveSearch("", "---").focus, "req");
-  assert.equal(resolveSearch("ab", "").focus, "title");                                  // a too-short title is still the title box's problem
+  assert.equal(resolveSearch("ab", "").ok, true);                                         // a 2 letter title goes to the backend now (it knows VP, SR, JR)
+  assert.equal(resolveSearch("--", "").focus, "title");                                   // no letter or digit at all is still the title box's problem
+  assert.ok(NO_MATCH_NOTE_REQ.includes("If the job ad shows a KIO ID, try that instead."));
 });
 
 test("a req lookup that finds nothing never echoes the req (it was typed into a masked box) and tells the person what to check", () => {
@@ -249,13 +311,13 @@ test("register form: what the result says about the links", () => {
   assert.deepEqual(linksOutcome(1, null), { kind: "ok", text: "1 destination link is stored with it." });
   assert.equal(linksOutcome(3, null).text, "3 destination links are stored with it.");
   const rowProblem = linksOutcome(null, { rows: { 0: { url: "url host is not allowed" } }, general: null, planRequired: false });
-  assert.equal(rowProblem.kind, "error"); assert.match(rowProblem.text, /see the messages under the addresses/); assert.match(rowProblem.text, /My postings \(Edit\)/);
+  assert.equal(rowProblem.kind, "error"); assert.match(rowProblem.text, /see the messages under the addresses/); assert.match(rowProblem.text, /My openings \(Edit\)/);
   const plan = linksOutcome(null, { rows: {}, general: "Destination links are part of the destination links tier.", planRequired: true });
-  assert.match(plan.text, /^Destination links are part of the destination links tier\. The posting itself is saved\. You can add links/);
+  assert.match(plan.text, /^Destination links are part of the destination links tier\. The opening itself is saved\. You can add links/);
 });
 
 test("register form: a liveness warning turns the links line into a notice", () => {
-  assert.deepEqual(linksOutcome(2, null, "When we checked, link 2 answered HTTP 404. It is saved anyway — make sure it is right."), { kind: "notice", text: "2 destination links are stored with it. When we checked, link 2 answered HTTP 404. It is saved anyway — make sure it is right." });
+  assert.deepEqual(linksOutcome(2, null, "When we checked, link 2 answered HTTP 404. It is saved anyway. Make sure it is right."), { kind: "notice", text: "2 destination links are stored with it. When we checked, link 2 answered HTTP 404. It is saved anyway. Make sure it is right." });
   assert.equal(linksOutcome(1, null, null).kind, "ok");
 });
 
@@ -265,5 +327,5 @@ test("register form: recruiter-firm rows count only while the toggle is on; the 
   assert.equal(on.used, true); assert.equal(on.ok, true); assert.deepEqual(on.links, [{ name: "Acme" }]);
   assert.equal(collectFirms([{ name: "", url: "https://a.example.com" }], true).ok, false);
   assert.equal(firmsOutcome(null, null), null); assert.equal(firmsOutcome(1, null).text, "1 recruiter firm is named on it."); assert.equal(firmsOutcome(2, null).text, "2 recruiter firms are named on it.");
-  assert.match(firmsOutcome(null, { rows: {}, general: "Recruiter firms can be named only while the posting says a third-party recruiter is involved.", recruiterOff: true }).text, /^Recruiter firms can be named only.*The posting itself is saved\. You can name them/);
+  assert.match(firmsOutcome(null, { rows: {}, general: "Recruiter firms can be named only while the opening says a third-party recruiter is involved.", recruiterOff: true }).text, /^Recruiter firms can be named only.*The opening itself is saved\. You can name them/);
 });

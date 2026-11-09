@@ -1,7 +1,7 @@
 // dashboard.test.js - the "My postings" model: status chips, the closing-soon boundary, filters, ordering, and the table cells. Run: node --test tests/dashboard.test.js
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CLOSING_SOON_DAYS, FILTERS, isClosingSoon, statusChip, matchesFilter, matchesText, sortByPosted, reqCell, postedCell, capCell, closesCell } from "../js/dashboard-model.js";
+import { CLOSING_SOON_DAYS, EXPIRY_FLAG_DAYS, FILTERS, SORTS, isClosingSoon, isExpiring, expiryFlag, lapseAt, statusChip, matchesFilter, matchesText, sortRows, defaultSort, closesAt, addedAt, statusesIn, showsStatusColumn, reqCell, addedCell, closesCell } from "../js/dashboard-model.js";
 
 const NOW = Date.parse("2026-09-21T12:00:00Z"), DAY = 86400000, at = (days) => new Date(NOW + days * DAY).toISOString();
 const base = { id: "11111111-1111-4111-8111-111111111111", title: "Analyst", req_number: "R-1", post_id: "ABCD2345EFGH", status: "live", closed_reason: null, stored_status: "live", is_remote: false, locations: [], location_ids: [], locations_attested: false,
@@ -19,7 +19,7 @@ test("closing soon: live or paused, and 10 days or fewer left (exactly 10 days c
   assert.equal(isClosingSoon(row({ status: "draft", expiration_date: null }), NOW), false);
 });
 
-test("status chips say what the posting is, in the site's own words", () => {
+test("status chips say what the opening is, in the site's own words", () => {
   const t = (o) => statusChip(row(o), NOW);
   assert.deepEqual(t({}), { text: "Live", cls: "status-active" });
   assert.deepEqual(t({ expiration_date: at(4) }), { text: "Closing soon", cls: "status-closing" });
@@ -33,7 +33,7 @@ test("status chips say what the posting is, in the site's own words", () => {
   assert.equal(t({ status: "closed", closed_reason: null }).text, "Closed");
 });
 
-test("filters: each posting lands under the right pill; Closed includes expired; All includes everything", () => {
+test("filters: each opening lands under the right pill; Closed includes expired; All includes everything", () => {
   const rows = { live: row({}), closing: row({ expiration_date: at(4) }), paused: row({ status: "paused" }), draft: row({ status: "draft" }), closed: row({ status: "closed" }), expired: row({ status: "expired" }), flagged: row({ status: "flagged" }) };
   const count = (key) => Object.entries(rows).filter(([, r]) => matchesFilter(r, key, NOW)).map(([n]) => n).sort().join(",");
   assert.equal(count("all"), "closed,closing,draft,expired,flagged,live,paused");
@@ -42,10 +42,11 @@ test("filters: each posting lands under the right pill; Closed includes expired;
   assert.equal(count("paused"), "paused");
   assert.equal(count("draft"), "draft");
   assert.equal(count("closed"), "closed,expired");
-  assert.deepEqual(FILTERS.map((f) => f[0]), ["all", "live", "closing", "paused", "scheduled", "draft", "closed"]);
+  assert.deepEqual(FILTERS.map((f) => f[0]), ["all", "live", "closing", "expiring", "paused", "scheduled", "draft", "closed"]);       // prompt BP: Expiring sits next to Closing soon
+  assert.deepEqual(FILTERS.map((f) => f[1]), ["All", "Live", "Closing soon", "Expiring", "Paused", "Scheduled", "Draft", "Closed"]);
 });
 
-test("text filter: title, req number or postID, ignoring case and punctuation", () => {
+test("text filter: title, req number or Opening ID, ignoring case and punctuation", () => {
   const r = row({ title: "Senior Data Analyst", req_number: "R-2026/0451", post_id: "K7Q3W9ZT2XPM" });
   assert.equal(matchesText(r, ""), true);
   assert.equal(matchesText(r, "data analyst"), true);
@@ -55,23 +56,131 @@ test("text filter: title, req number or postID, ignoring case and punctuation", 
   assert.equal(matchesText(row({ req_number: null }), "R-1"), false);
 });
 
-test("sorting by posted date: newest first by default, oldest first when asked, drafts always last", () => {
-  const a = row({ id: "a", posted_at: at(-1), created_at: at(-1) }), b = row({ id: "b", posted_at: at(-9), created_at: at(-9) }), d = row({ id: "d", status: "draft", posted_at: null, created_at: at(-3) }), d2 = row({ id: "d2", status: "draft", posted_at: null, created_at: at(-2) });
-  assert.deepEqual(sortByPosted([b, d, a, d2], "desc").map((x) => x.id), ["a", "b", "d2", "d"]);
-  assert.deepEqual(sortByPosted([b, d, a, d2], "asc").map((x) => x.id), ["b", "a", "d2", "d"]);
-  const input = [b, a]; sortByPosted(input, "desc"); assert.deepEqual(input.map((x) => x.id), ["b", "a"]);          // the caller's array is not reordered
+// prompt BV (October 12, 2026): the ID as the column and the job ad show it (with hyphens) finds the row; the stored form has none
+test("text filter: a KIO ID typed or pasted with its hyphens, in any case, with spaces, or a part spanning a hyphen; titles with a hyphen; hyphens alone", () => {
+  const r = row({ title: "Front-End Engineer", req_number: "R-9", post_id: "KIO7K3M9Q2XW4T9" });
+  for (const q of ["KIO-7K3M-9Q2X-W4T9", "kio-7k3m-9q2x-w4t9", "  KIO-7K3M-9Q2X-W4T9  ", "KIO 7K3M 9Q2X W4T9", "KIO7K3M9Q2XW4T9", "7K3M-9Q2X", "9q2x-w4", "7K3M-9"]) assert.equal(matchesText(r, q), true, q);
+  for (const q of ["KIO-7K3M-9Q2X-W4TA", "KIO-AAAA-BBBB-CCCC", "7K3M-9Q2Y", "nurse"]) assert.equal(matchesText(r, q), false, q);
+  assert.equal(matchesText(r, "front-end"), true, "a title with a hyphen is found by that hyphen");
+  assert.equal(matchesText(r, "front end"), true);
+  assert.equal(matchesText(r, "R-9"), true, "the req number as before");
+  for (const q of ["-", "---", " - - "]) assert.equal(matchesText(r, q), true, "punctuation alone is an empty filter: " + JSON.stringify(q));
+  assert.equal(matchesText(row({ post_id: null, title: "Analyst" }), "KIO-7K3M"), false, "no ID, no match");
 });
 
-test("table cells: a missing req number, a draft with no dates, no cap, and the close cell per status", () => {
-  assert.equal(reqCell(row({ req_number: null })), "—");
+// ---- prompt BP (October 11, 2026): sorting, the flag, the Expiring pill, the Status column
+test("the sort options: six in the agreed words, Status only on request; defaults per pill", () => {
+  assert.deepEqual(SORTS.map((s) => s[1]), ["Added, newest first", "Added, oldest first", "Closes, soonest first", "Closes, furthest first", "Title, A to Z", "Title, Z to A", "Status"]);
+  for (const key of ["all", "live", "paused", "scheduled", "draft", "closed"]) assert.equal(defaultSort(key), "added_desc", key);
+  assert.equal(defaultSort("closing"), "closes_asc");
+  assert.equal(defaultSort("expiring"), "closes_asc");
+});
+
+test("sort by Added: newest first or oldest first, by the day the opening was added; ties by title; the caller's array is not reordered", () => {
+  const a = row({ id: "a", title: "B", created_at: at(-1) }), b = row({ id: "b", title: "A", created_at: at(-9) }), d = row({ id: "d", title: "C", status: "draft", posted_at: null, created_at: at(-3) }), same = row({ id: "s", title: "A2", created_at: at(-9) });
+  assert.deepEqual(sortRows([b, d, a, same], "added_desc", NOW).map((x) => x.id), ["a", "d", "b", "s"].map((x) => x));   // b and s have the same day: b ("A") before s ("A2")
+  assert.deepEqual(sortRows([b, d, a, same], "added_asc", NOW).map((x) => x.id), ["b", "s", "d", "a"]);
+  const input = [b, a]; sortRows(input, "added_desc", NOW); assert.deepEqual(input.map((x) => x.id), ["b", "a"]);
+  assert.equal(addedAt(a), Date.parse(at(-1)));
+});
+
+test("sort by Closes: the date the Closes cell shows (close date, publish-by, go-live); rows with no date go last in BOTH directions", () => {
+  const live = row({ id: "live", expiration_date: at(20) }), soon = row({ id: "soon", expiration_date: at(2) }), draft = row({ id: "draft", status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: at(9) }),
+    sched = row({ id: "sched", status: "scheduled", stored_status: "draft", posted_at: null, expiration_date: null, go_live_at: at(5) }), none = row({ id: "none", status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: null }),
+    closed = row({ id: "closed", status: "closed", expiration_date: at(-4) });
+  assert.equal(closesAt(none), null);
+  assert.equal(closesAt(sched), Date.parse(at(5)));
+  // prompt BR (October 12, 2026): a closed or expired row goes after every open row in both directions (its scheduled expiration_date never happened); it used to sort by that date, in among the live ones
+  assert.deepEqual(sortRows([live, none, soon, draft, sched, closed], "closes_asc", NOW).map((x) => x.id), ["soon", "sched", "draft", "live", "none", "closed"]);
+  assert.deepEqual(sortRows([live, none, soon, draft, sched, closed], "closes_desc", NOW).map((x) => x.id), ["live", "draft", "sched", "soon", "none", "closed"]);
+});
+
+test("prompt BR: closed and expired rows follow the open ones in both directions and, among themselves, the day they really ended (expired: its expiration date; closed: closed_at, none while the server does not send it)", () => {
+  const open = row({ id: "open", expiration_date: at(30) }), none = row({ id: "none", status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: null });
+  const c1 = row({ id: "c1", status: "closed", expiration_date: at(40), closed_at: at(-9) }), c2 = row({ id: "c2", status: "closed", expiration_date: at(2), closed_at: at(-3) });
+  const e1 = row({ id: "e1", status: "expired", stored_status: "live", closed_reason: "expired_no_action", expiration_date: at(-20) });
+  const cx = row({ id: "cx", status: "closed", expiration_date: at(-1) });          // closed, closing day not sent: no date, after the dated ones
+  assert.equal(closesAt(c1), Date.parse(at(-9)), "the closing day, not the scheduled date");
+  assert.equal(closesAt(e1), Date.parse(at(-20)));
+  assert.equal(closesAt(cx), null);
+  const all = [c2, open, cx, e1, c1, none];
+  assert.deepEqual(sortRows(all, "closes_asc", NOW).map((x) => x.id), ["open", "none", "e1", "c1", "c2", "cx"]);
+  assert.deepEqual(sortRows(all, "closes_desc", NOW).map((x) => x.id), ["open", "none", "c2", "c1", "e1", "cx"]);
+  // the Closed pill holds only these rows: the same order by the real day
+  assert.deepEqual(sortRows([c2, cx, e1, c1], "closes_asc", NOW).map((x) => x.id), ["e1", "c1", "c2", "cx"]);
+});
+
+test("sort by Title: A to Z and Z to A ignoring case, numbers in order; sort by Status groups by the chip's words", () => {
+  const t = (id, title, o) => row(Object.assign({ id, title }, o));
+  const rows = [t("c", "zebra"), t("a", "Apple 10"), t("b", "apple 9"), t("d", "Mango")];
+  assert.deepEqual(sortRows(rows, "title_asc", NOW).map((x) => x.id), ["b", "a", "d", "c"]);
+  assert.deepEqual(sortRows(rows, "title_desc", NOW).map((x) => x.id), ["c", "d", "a", "b"]);
+  const st = [t("x", "X", { status: "paused" }), t("y", "Y", { status: "live" }), t("z", "Z", { status: "draft", stored_status: "draft" })];
+  assert.deepEqual(sortRows(st, "status", NOW).map((x) => x.id), ["z", "y", "x"]);          // Draft, Live, Paused
+});
+
+test("the flag: words only inside the one constant (7 days); whole units rounded down; none for closed, scheduled, no date or a date already past", () => {
+  assert.equal(EXPIRY_FLAG_DAYS, 7);
+  const f = (o, now = NOW) => expiryFlag(row(o), now);
+  assert.equal(f({ expiration_date: at(7) }), "in 7 days");
+  assert.equal(f({ expiration_date: new Date(NOW + 7 * DAY + 1000).toISOString() }), "");                       // 7 days and a second: no flag
+  assert.equal(f({ expiration_date: at(3.5) }), "in 3 days");
+  assert.equal(f({ expiration_date: at(1) }), "in 1 day");
+  assert.equal(f({ expiration_date: new Date(NOW + 5 * 3600000 + 60000).toISOString() }), "in 5 hours");
+  assert.equal(f({ expiration_date: new Date(NOW + 3600000 + 1000).toISOString() }), "in 1 hour");
+  assert.equal(f({ expiration_date: new Date(NOW + 59 * 60000).toISOString() }), "in less than an hour");
+  assert.equal(f({ expiration_date: at(-1) }), "", "already past: no new wording");
+  assert.equal(f({ status: "paused", expiration_date: at(4) }), "in 4 days");
+  assert.equal(f({ status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: at(5) }), "in 5 days");
+  assert.equal(f({ status: "scheduled", stored_status: "draft", posted_at: null, expiration_date: null, go_live_at: at(2) }), "", "a go-live time is not a lapse");
+  assert.equal(f({ status: "closed", expiration_date: at(2) }), "");
+  assert.equal(f({ status: "expired", expiration_date: at(-2) }), "");
+  assert.equal(f({ status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: null }), "");
+  assert.equal(lapseAt(row({ status: "closed" })), null);
+});
+
+test("Expiring: a draft within 7 days of the end of its window; not a live or paused one (Closing soon covers them), not one already past, not a scheduled one", () => {
+  const d = (days, o) => row(Object.assign({ status: "draft", stored_status: "draft", posted_at: null, expiration_date: null, publish_by: at(days) }, o));
+  assert.equal(isExpiring(d(5), NOW), true);
+  assert.equal(isExpiring(d(7), NOW), true);
+  assert.equal(isExpiring(d(8), NOW), false);
+  assert.equal(isExpiring(d(-1), NOW), false);
+  assert.equal(isExpiring(d(2, { status: "scheduled", publish_by: null, go_live_at: at(2) }), NOW), false);
+  assert.equal(isExpiring(row({ expiration_date: at(3) }), NOW), false);
+  assert.equal(isExpiring(row({ status: "paused", expiration_date: at(3) }), NOW), false);
+  assert.equal(matchesFilter(d(5), "expiring", NOW), true);
+  assert.equal(matchesFilter(d(5), "draft", NOW), true, "an expiring draft is still a draft");
+  assert.equal(matchesFilter(row({ expiration_date: at(3) }), "closing", NOW), true, "Closing soon is unchanged");
+});
+
+test("the Status column: shown only in a view that can hold more than one status, worked out from the filters themselves", () => {
+  for (const key of ["live", "paused", "scheduled", "draft", "expiring"]) assert.equal(showsStatusColumn(key), false, key + " holds one status");
+  for (const key of ["all", "closing", "closed"]) assert.equal(showsStatusColumn(key), true, key + " can hold more than one");
+  assert.deepEqual(statusesIn("closing").sort(), ["live", "paused"]);
+  assert.deepEqual(statusesIn("closed").sort(), ["closed", "expired"]);
+  assert.deepEqual(statusesIn("expiring"), ["draft"]);
+});
+
+test("table cells: a missing req number, the Added line, and the close cell per status", () => {
+  assert.equal(reqCell(row({ req_number: null })), "None");
   assert.equal(reqCell(row({})), "R-1");
-  assert.equal(postedCell(row({ posted_at: null })), "—");
-  assert.equal(capCell(row({ applicant_cap: null })), "No cap set");
-  assert.equal(capCell(row({ applicant_cap: 250 })), "250");
+  assert.match(addedCell(row({})), /^Added [A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(addedCell(row({ status: "draft", posted_at: null })), /^Added [A-Z][a-z]{2} \d{1,2}$/, "a draft has an added day too");
   assert.match(closesCell(row({ status: "draft", posted_at: null, expiration_date: null, publish_by: at(9) })), /^Publish by [A-Z][a-z]{2} \d{1,2}$/);
-  assert.equal(closesCell(row({ status: "draft", posted_at: null, expiration_date: null, publish_by: null })), "—");
+  assert.equal(closesCell(row({ status: "draft", posted_at: null, expiration_date: null, publish_by: null })), "Not set");
   assert.match(closesCell(row({})), /[AP]M/);                                    // a live posting's close date carries the exact time
-  assert.match(closesCell(row({ status: "closed" })), /^[A-Z][a-z]{2} \d{1,2}$/);
+  // prompt BR (October 12, 2026): the day it really ended, with the word for how; a closed row never shows its scheduled date (it used to show that date, bare)
+  assert.equal(closesCell(row({ status: "closed", expiration_date: at(25) })), "Closed", "closed, closing day not sent: the word alone, never the scheduled date");
+  assert.match(closesCell(row({ status: "closed", expiration_date: at(25), closed_at: at(-3) })), /^Closed [A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(closesCell(row({ status: "expired", stored_status: "live", expiration_date: at(-2) })), /^Expired [A-Z][a-z]{2} \d{1,2}$/);
+  assert.equal(closesCell(row({ status: "expired", stored_status: "live", expiration_date: null })), "Expired");
+  // prompt BV (October 12, 2026): a draft whose publish window has ended says Ended (with the day); a draft with time left still says Publish by
+  const dead = row({ status: "draft", posted_at: null, expiration_date: null, publish_by: at(-3) }), alive = row({ status: "draft", posted_at: null, expiration_date: null, publish_by: at(9) });
+  assert.match(closesCell(dead, NOW), /^Ended [A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(closesCell(alive, NOW), /^Publish by [A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(closesCell(dead), /^Publish by /, "without a time the cell reads as it always did");
+  assert.equal(closesCell(row({ status: "draft", posted_at: null, expiration_date: null, publish_by: null }), NOW), "Not set");
+  assert.match(closesCell(row({ status: "scheduled", stored_status: "draft", go_live_at: at(-1), publish_by: at(-3) }), NOW), /^Goes live /, "a scheduled draft is exempt from the publish window");
 });
 
 // ---- slice B: row actions

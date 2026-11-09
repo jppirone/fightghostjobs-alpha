@@ -3,6 +3,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { changedFields, checkEdit, mapEditErrors, reqKey, MAX_NOTE, MAX_DESC, KIND_TEXT, checkLinks, mapLinksErrors, planNotice, MAX_LINKS, checkWarnings, storedLinkText, checkFirms, applyLinks, recruiterFirms } from "../js/edit-form.js";
 import { shapes } from "../js/api.js";
+import { groupCode } from "../js/format.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ID = "3f1d5b1e-0000-4000-8000-000000000001";
 const AUSTIN = { id: "gn:4671654", kind: "place", display: "Austin, TX" }, DALLAS = { id: "gn:4684888", kind: "place", display: "Dallas, TX" };
@@ -17,7 +21,7 @@ test("nothing changed: nothing is sent", () => {
   const r = checkEdit(orig(), same({ note: "hello" })); assert.equal(r.body, undefined); assert.ok(r.errors.form);
 });
 
-test("only what changed is sent, trimmed, with the note; the posting id comes from the loaded posting", () => {
+test("only what changed is sent, trimmed, with the note; the opening id comes from the loaded opening", () => {
   const r = checkEdit(orig(), same({ title: "  Data Analyst II ", note: "  Level fixed  " }));
   assert.deepEqual(r.errors, {}); assert.deepEqual(r.body, { posting_id: ID, title: "Data Analyst II", change_note: "Level fixed" });
   assert.deepEqual(Object.keys(changedFields(orig(), same({ desc: "Analyse the data well.", appcap: "25", recruiter: true, aiFilter: true }))).sort(), ["ai_filtering", "applicant_cap", "description_text", "third_party_recruiter"]);
@@ -30,7 +34,7 @@ test("an AI answer that was never stated is not sent until it is touched; a stat
   assert.equal("ai_filtering" in changedFields(orig(), same({ aiFilter: null })), false);
 });
 
-test("pass 26: the req-number search toggle defaults to true (on) when the loaded posting predates the field, and only a real change is sent", () => {
+test("pass 26: the req-number search toggle defaults to true (on) when the loaded opening predates the field, and only a real change is sent", () => {
   assert.equal(changedFields(orig(), same()).req_searchable, undefined);            // orig has no req_searchable at all (pre-pass-26 shape): both sides read as "on", so nothing is sent
   assert.equal(changedFields(orig({ req_searchable: true }), same()).req_searchable, undefined);
   assert.equal(changedFields(orig({ req_searchable: true }), same({ reqSearchable: true })).req_searchable, undefined);
@@ -47,7 +51,7 @@ test("pass 26: turning the toggle off (or back on) is sent as an explicit boolea
   assert.deepEqual(r.errors, {}); assert.equal(r.body.req_searchable, false);
 });
 
-test("a posting that is not a draft: the note is required for every edit", () => {
+test("an opening that is not a draft: the note is required for every edit", () => {
   for (const blank of ["", "   ", undefined, null]) { const r = checkEdit(orig(), same({ title: "Data Analyst II", note: blank })); assert.ok(r.errors.note, JSON.stringify(blank)); assert.equal(r.body, undefined); }
   assert.ok(checkEdit(orig(), same({ title: "Data Analyst II", note: "x".repeat(MAX_NOTE + 1) })).errors.note);
   assert.equal(checkEdit(orig(), same({ title: "Data Analyst II", note: "x".repeat(MAX_NOTE) })).errors.note, undefined);
@@ -60,7 +64,7 @@ test("a draft: the note is optional and is sent only when given", () => {
   assert.ok(checkEdit(d, same({ title: "Data Analyst II", note: "x".repeat(MAX_NOTE + 1) })).errors.note);
 });
 
-test("the location rule: on a live posting a change to the places, the remote flag or the one-opening statement needs a NEW req number", () => {
+test("the location rule: on a live opening a change to the places, the remote flag or the one-opening statement needs a NEW req number", () => {
   for (const v of [{ locEntries: [DALLAS] }, { remote: true }, { locEntries: [AUSTIN, DALLAS], attested: true }]) {
     const r = checkEdit(orig(), same(Object.assign({ note: "moved" }, v))); assert.ok(r.errors.req, JSON.stringify(v)); assert.equal(r.body, undefined);
     const same2 = checkEdit(orig(), same(Object.assign({ note: "moved", req: "r 100" }, v))); assert.ok(same2.errors.req, "the same number typed differently is not new");
@@ -82,7 +86,7 @@ test("the fields are checked the way the backend checks them", () => {
   assert.equal(reqKey("  R-100 "), "r100"); assert.equal(reqKey("---"), "");
 });
 
-test("server refusals land under the right input; the 'too much changed' ones offer a new posting; a draft's reused req asks for the note", () => {
+test("server refusals land under the right input; the 'too much changed' ones offer a new opening; a draft's reused req asks for the note", () => {
   const t = mapEditErrors({ code: "text_changed_too_much", message: "This edit changes most of the requirements (about 55% ...", field: "description_text", errors: [] });
   assert.equal(t.byField.desc, "This edit changes most of the requirements (about 55% ..."); assert.equal(t.newPosting, true);
   assert.equal(mapEditErrors({ code: "text_drifted_too_far", message: "m" }).newPosting, true);
@@ -182,10 +186,10 @@ test("the plan and the stored links in the answers: fail closed; an address is n
 test("pass B: the liveness warning names the links that did not answer, and a stored link reads as label + what candidates see", () => {
   assert.equal(checkWarnings([]), null); assert.equal(checkWarnings(undefined), null);
   assert.equal(checkWarnings([{ position: 1, check_status: "ok", check_http: 200 }, { position: 2, check_status: "skipped", check_http: null }]), null);
-  assert.equal(checkWarnings([{ position: 2, check_status: "failed", check_http: 404 }]), "When we checked, link 2 answered HTTP 404. It is saved anyway — make sure it is right.");
-  assert.equal(checkWarnings([{ position: 1, check_status: "failed", check_http: null }, { position: 3, check_status: "failed", check_http: 999 }]), "When we checked, link 1 could not be reached; link 3 answered HTTP 999. They are saved anyway — make sure they are right.");
-  assert.equal(storedLinkText({ position: 1, label: "Careers", shown_as: "LinkedIn", check_status: "ok", check_http: 200 }), "1. Careers — candidates see “LinkedIn”");
-  assert.equal(storedLinkText({ position: 2, label: null, shown_as: "Employer-provided link — not verified by us", check_status: "failed", check_http: 503 }), "2. candidates see “Employer-provided link — not verified by us” (did not answer when we checked: HTTP 503)");
+  assert.equal(checkWarnings([{ position: 2, check_status: "failed", check_http: 404 }]), "When we checked, link 2 answered HTTP 404. It is saved anyway. Make sure it is right.");
+  assert.equal(checkWarnings([{ position: 1, check_status: "failed", check_http: null }, { position: 3, check_status: "failed", check_http: 999 }]), "When we checked, link 1 could not be reached; link 3 answered HTTP 999. They are saved anyway. Make sure they are right.");
+  assert.equal(storedLinkText({ position: 1, label: "Careers", shown_as: "LinkedIn", check_status: "ok", check_http: 200 }), "1. Careers, candidates see “LinkedIn”");
+  assert.equal(storedLinkText({ position: 2, label: null, shown_as: "Employer-provided link, not checked by us", check_status: "failed", check_http: 503 }), "2. candidates see “Employer-provided link, not checked by us” (did not answer when we checked: HTTP 503)");
   assert.equal(storedLinkText({ position: 3, label: null }), "3. candidates see “Application link 3”");            // an answer from before pass B
 });
 
@@ -201,8 +205,54 @@ test("pass C: recruiter-firm rows: the name is required, the link optional; blan
   assert.equal(mapLinksErrors({ code: "recruiter_off", message: "Turn it on first." }, [0]).recruiterOff, true);
   const m = mapLinksErrors({ field: "links[0].name", message: "name must not be empty", errors: [{ field: "links[0].name", message: "name must not be empty" }] }, [2]);
   assert.deepEqual(m.rows, { 2: { name: "name must not be empty" } });
-  assert.equal(storedLinkText({ position: 1, kind: "recruiter", firm: "Acme Staffing", label: null, shown_as: null }), "1. Acme Staffing — no link");
-  assert.equal(storedLinkText({ position: 2, kind: "recruiter", firm: "Beta Search", label: null, shown_as: "LinkedIn", check_status: "ok" }), "2. Beta Search — with a link, shown as “LinkedIn”");
+  assert.equal(storedLinkText({ position: 1, kind: "recruiter", firm: "Acme Staffing", label: null, shown_as: null }), "1. Acme Staffing, no link");
+  assert.equal(storedLinkText({ position: 2, kind: "recruiter", firm: "Beta Search", label: null, shown_as: "LinkedIn", check_status: "ok" }), "2. Beta Search, with a link, shown as “LinkedIn”");
   const both = [{ position: 1, kind: "apply", label: "x" }, { position: 1, kind: "recruiter", firm: "Acme" }, { position: 2, label: null }];
   assert.equal(applyLinks(both).length, 2); assert.equal(recruiterFirms(both).length, 1);
+});
+
+// the postID on the edit page: the same 12-character code, shown with dashes through the same formatter as the dashboard row, the comments page and the create-success screen
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const src = (f) => fs.readFileSync(path.join(ROOT, f), "utf8").replace(/\?v=[0-9a-f]{8}(?=["'])/g, "");   // the source as written, without the version markers of tests/stamp-versions.js (prompt BG): every pin below sees the text it always saw
+
+test("the edit page has the Opening ID from the opening it already loads: the get-my-posting shape carries it, and the formatter groups it as XXXX-XXXX-XXXX", () => {
+  const p = orig();
+  assert.equal(p.post_id, "ABCDEFGHJKMN"); assert.equal(groupCode(p.post_id), "ABCD-EFGH-JKMN");
+  assert.equal(shapes.openPosting(Object.assign({}, p, { ai_filtering: false, ai_interview_other: null, third_party_recruiter: false, req_searchable: true, destination_links_exclusive: false })), true);
+  assert.equal(shapes.openPosting(Object.assign({}, p, { post_id: "short", ai_filtering: false, ai_interview_other: null, third_party_recruiter: false, req_searchable: true, destination_links_exclusive: false })), false);
+});
+
+test("edit.html and edit.js show the Opening ID at the top, with the same label text, formatter and class as the dashboard and the comments page", () => {
+  const html = src("edit.html"), js = src("js/pages/edit.js");
+  // prompt BQ (October 12, 2026): the line is drawn by js/kio-block.js (the ID, the short link and the lines for a job ad, with copy buttons); the ID is still the element #postId, formatted by the same displayId as groupCode
+  assert.match(html, /<div id="postIdLine"[^>]*\bhidden><\/div>/);
+  assert.ok(html.indexOf('id="postIdLine"') > html.indexOf("Edit an opening</h1>") && html.indexOf('id="postIdLine"') < html.indexOf('id="statusLine"'), "the Opening ID sits under the heading, above the status line");
+  assert.match(js, /import \{ kioBlock \} from "\.\.\/kio-block\.js";/);
+  assert.ok(js.includes('const idLine = $("#postIdLine"); clear(idLine); idLine.append(kioBlock(p.post_id)); idLine.hidden = false;'));
+  assert.ok(js.indexOf('idLine.hidden = false;') < js.indexOf("noteLabel(p.stored_status"), "it is set in populate(), so every reload after a save keeps it");
+  assert.ok(src("js/kio-block.js").includes('import { displayId, shortLinkOf, adLines, isKioShown } from "./kio.js";') && src("js/format.js").includes("return displayId(code);"), "the block and groupCode use the one formatter");
+});
+
+test("the pages that already showed the Opening ID still do, through the same formatter", () => {
+  assert.ok(src("js/pages/dashboard.js").includes("groupCode(p.post_id)") && src("js/pages/dashboard.js").includes('"Title", "Req #", "KIO ID"'));      // prompt BP: the headings are drawn by the page script (prompt BU: the label is "KIO ID")
+  assert.ok(src("js/pages/comments.js").includes('"KIO ID: " + groupCode(p.post_id)'));
+  assert.ok(src("js/pages/register.js").includes('kioBlock(p.public_code, { idClass: "code-box" })') && src("js/pages/register.js").includes('"Your KIO ID"'));   // prompt BQ: the confirmation draws the same block (js/kio-block.js)
+});
+
+// ---- the recruiter toggle and the destination links section (edit page layout and wording)
+// prompt BK (October 11, 2026): the main button moved to the one action area at the very bottom of the page, after every section, so the Destination links card (and the firms panel in it) now sits ABOVE it
+test("the recruiter toggle is free and in the main form; naming a firm sits in the Destination links section BELOW it (above the one action area at the bottom), and the toggle's sentence says so without implying links are required", () => {
+  const html = src("edit.html");
+  const toggle = html.indexOf('id="recruiterToggle"'), save = html.indexOf('id="saveBtn"'), card = html.indexOf('id="linksCard"'), firms = html.indexOf('id="firmsPanel"'), form = html.indexOf('id="form"'), formEnd = html.indexOf("</form>");
+  assert.ok(toggle > form && toggle < formEnd, "the toggle is in the main form");
+  assert.ok(card > formEnd && firms > card && firms < save && save > card, "the firms panel is inside the Destination links card, and the action area (Save changes) comes after it, at the bottom");
+  assert.ok(html.indexOf('id="exclusiveRow"') > form && html.indexOf('id="exclusiveRow"') < formEnd, "(the exclusive toggle is part of the main save, so it stays in the form)");
+  assert.ok(html.includes('<div id="recruiterHint" style="font-size:13px;color:var(--muted);margin-top:2px;">Free for every employer: just say yes or no. Naming the recruiter firm and adding its links is optional. It belongs to the Destination links section below, which is part of the destination links tier.</div>'));
+  assert.ok(html.includes('aria-label="Third-party recruiter involved" aria-describedby="recruiterHint"'), "the sentence is read with the toggle");
+  assert.equal(html.includes("The yes/no flag is free. Naming the firm is a destination links tier feature."), false, "the old sentence is gone from this page");
+  const js = src("js/pages/edit.js");
+  assert.ok(js.includes('"Naming a firm is optional. To name one here, first save this opening with the recruiter toggle on (Save changes, at the bottom of the page); then come back to this section."'));
+  assert.equal(js.includes("Save the opening with the toggle on first; then you can name the firm here."), false);
+  // the "save first" step is a server rule, not a page habit: the page still opens the firm rows only for a SAVED recruiter flag
+  assert.ok(js.includes('$("#firmsForm").hidden = !(notice.state === "active" && savedOn && state.recruiter);'));
 });
