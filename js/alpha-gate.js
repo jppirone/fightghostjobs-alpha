@@ -3,12 +3,13 @@
 //
 // It stops someone who stumbles on the alpha address from browsing the pilot's sample and test employer data. The password itself is NOT in this file: only a salted
 // PBKDF2-SHA256 hash of it (310000 rounds), so reading this file does not reveal it. It is a classic (non-module) script loaded in the <head> of every page so the page
-// stays hidden until the password is given once per browser (localStorage). As a second guard it does nothing unless the page is served from the alpha host (HOST below).
+// stays hidden until the password is given once per browser (localStorage). As a second guard it does nothing unless the page is served from one of the two hosts of this site (HOSTS below:
+// alpha.fightghostjobs.com and app.fightghostjobs.com, prompt JW, November 9, 2026). An unlock is remembered per host (localStorage is per address), so each host asks once.
 // ============================================================================================================
 (function () {
   "use strict";
-  var HOST = "alpha.fightghostjobs.com", KEY = "fgj_alpha_gate", SALT = "UyipNuN6xRITENPL/6e+Uw==", HASH = "zxrC34IgwkGcF7DkxW/ZkY9zLFAtvYecGV8l6nl3tg0=", ITER = 310000, TAG = KEY + "_v", VER = HASH.slice(0, 16);
-  if (location.hostname !== HOST) return;
+  var HOSTS = ["alpha.fightghostjobs.com", "app.fightghostjobs.com"], KEY = "fgj_alpha_gate", SALT = "UyipNuN6xRITENPL/6e+Uw==", HASH = "zxrC34IgwkGcF7DkxW/ZkY9zLFAtvYecGV8l6nl3tg0=", ITER = 310000, TAG = KEY + "_v", VER = HASH.slice(0, 16);
+  if (HOSTS.indexOf(location.hostname) === -1) return;
   var open = false;
   // unlocked only if it was unlocked with THIS password: a browser that entered an older password is asked again
   try { open = localStorage.getItem(KEY) === "open" && localStorage.getItem(TAG) === VER; } catch (e) { open = false; }
