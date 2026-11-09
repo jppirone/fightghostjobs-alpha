@@ -1,5 +1,5 @@
 // DERIVED FOR ALPHA (prompt JW, November 9, 2026) from the stage site rules (tests/site-check.js) by the derivation script in the ops repository (alpha-site-checks/derive-alpha-checks.mjs). Do not edit by hand: change the stage file or the derivation, then derive again.
-// What differs from stage: alpha's project address; the password gate is js/alpha-gate.js on TWO hosts (alpha and app); the findings about the stage test suite (test files and run-all steps that only stage carries) and the check of the stage SQL/edge tools (S71) are not made here; the wording rule S66 does not read the gate page text (the gate goes away at launch).
+// What differs from stage: alpha's project address; the password gate is js/alpha-gate.js on TWO hosts (alpha and app); the findings about the stage test suite (test files and run-all steps that only stage carries) and the check of the stage SQL/edge tools (S71) are not made here; the wording rule S66 does not read the gate page text (the gate goes away at launch); rule S75 does not ask for the pre-commit hook and package.json (alpha publishes neither; its stale marker check stays).
 // site-check.js - static rules for the whole site. Run: node tests/site-check.js [rootDir]      (exit 1 on any finding)
 // The site handles two kinds of session and shows text written by strangers (postings, comments), so these rules are enforced by a program, not by care:
 //   S1  every page carries the one expected Content-Security-Policy (scripts only from this site; the only network destination is the project's own API)
@@ -98,7 +98,7 @@ const stripJsComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").ma
 // opts.toolsDir / opts.reportsDir: where rule S71 looks for the stage tools and the files they write (default: the main folder next to this repository)
 // alpha does not carry the stage test suite: findings about the stage test files and the steps of the stage run-all are not made here (S90, every alpha test file is a step of its run-all, and S69, only tests/cdp-tabs.js starts a browser, stay)
 const KEEP_IN_TESTS = new Set(["S69", "S90"]);
-const ALPHA_DROP = (rule, rel) => (rel.startsWith("tests/") && !KEEP_IN_TESTS.has(rule)) || (rule === "S66" && rel === "js/alpha-gate.js");
+const ALPHA_DROP = (rule, rel) => (rel.startsWith("tests/") && !KEEP_IN_TESTS.has(rule)) || (rule === "S66" && rel === "js/alpha-gate.js") || (rule === "S75" && (rel === ".githooks/pre-commit" || rel === "package.json"));   // alpha publishes neither the pre-commit hook nor package.json; the stale marker check of S75 stays
 export function checkSite(root, opts = {}) {
   const findings = []; const add = (rule, file, msg) => { const rel = path.relative(root, file).replace(/\\/g, "/"); if (ALPHA_DROP(rule, rel)) return; findings.push({ rule, file: rel, msg }); };
   const files = walk(root);

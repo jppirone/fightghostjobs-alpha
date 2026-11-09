@@ -1,5 +1,5 @@
 // DERIVED FOR ALPHA (prompt JW, November 9, 2026) from the stage negative controls (tests/site-check.controls.js) by the derivation script in the ops repository (alpha-site-checks/derive-alpha-checks.mjs). Do not edit by hand: change the stage file or the derivation, then derive again.
-// What differs from stage: alpha's project address; the password gate is js/alpha-gate.js on TWO hosts (alpha and app); the findings about the stage test suite (test files and run-all steps that only stage carries) and the check of the stage SQL/edge tools (S71) are not made here; the wording rule S66 does not read the gate page text (the gate goes away at launch).
+// What differs from stage: alpha's project address; the password gate is js/alpha-gate.js on TWO hosts (alpha and app); the findings about the stage test suite (test files and run-all steps that only stage carries) and the check of the stage SQL/edge tools (S71) are not made here; the wording rule S66 does not read the gate page text (the gate goes away at launch); rule S75 does not ask for the pre-commit hook and package.json (alpha publishes neither; its stale marker check stays).
 // site-check.controls.js - negative controls for site-check.js: each deliberate defect below must be caught by the rule it is meant to trip. Run: node tests/site-check.controls.js
 import fs from "node:fs";
 import os from "node:os";
@@ -16,7 +16,7 @@ let n = 0, missed = 0;
 const ONLY = process.env.FGJ_CONTROLS_ONLY ? process.env.FGJ_CONTROLS_ONLY.split(",").map((x) => x.trim()).filter(Boolean) : null;
 let skipped = 0;
 // the stage gate controls name the stage gate and its single host; alpha has its own below. A control whose mutation touches tests/ is about the stage test suite and is not made here (S90 and S69 stay).
-const STAGE_ONLY_LABEL = /stage gate|staging gate/i;
+const STAGE_ONLY_LABEL = /stage gate|staging gate|the pre-commit hook is missing|the hook does not run the stamp|package.json has no stamp script/i;
 const KEEP_IN_TESTS = new Set(["S69", "S90"]);
 const sameTree = (a, b) => { const list = (d) => { const o = []; const w = (x) => { for (const e of fs.readdirSync(x, { withFileTypes: true })) { const p = path.join(x, e.name); if (e.isDirectory()) w(p); else o.push(path.relative(d, p).replace(/\\/g, "/") + "\u0000" + fs.readFileSync(p, "utf8")); } }; if (fs.existsSync(d)) w(d); return o.sort().join("\u0001"); }; return list(a) === list(b); };
 function control(label, rule, mutate) {
