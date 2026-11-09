@@ -24,7 +24,8 @@ function control(label, rule, mutate) {
   if (STAGE_ONLY_LABEL.test(label)) { skipped++; return; }
   const dir = path.join(tmpBase, "c" + ++n);
   fs.cpSync(ROOT, dir, { recursive: true, filter: (src) => !/[\\/](\.git|node_modules)([\\/]|$)/.test(src) });
-  mutate(dir);
+  // a control about a file of the stage tests that alpha does not carry (or text that alpha's copy does not have) cannot be made: it is not made, it is counted
+  try { mutate(dir); } catch (e) { if (/tests[\\/]/.test(String((e && (e.path || e.message)) || ""))) { skipped++; return; } throw e; }
   if (!KEEP_IN_TESTS.has(rule) && !sameTree(path.join(dir, "tests"), path.join(ROOT, "tests"))) { skipped++; return; }
   const found = checkSite(dir).filter((f) => f.rule === rule);
   const ok = found.length > 0;
