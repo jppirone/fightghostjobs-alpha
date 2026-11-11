@@ -1,10 +1,16 @@
 // app.js - what every page shares: the API object wired to the real session, the top-bar account area, and the "you must be signed in as ..." guards.
 
-import { createApi, describeError, isAuthFailure } from "./api.js";
-import { SUPABASE_URL, PUBLISHABLE_KEY } from "./config.js";
-import { accessToken, currentSession, signOut, rememberNext } from "./session.js";
-import { h, clear } from "./dom.js";
-import { initials } from "./format.js";
+import { createApi, describeError, isAuthFailure } from "./api.js?v=4e9779c2";
+import { SUPABASE_URL, PUBLISHABLE_KEY } from "./config.js?v=6c180ba3";
+import { accessToken, currentSession, signOut, rememberNext } from "./session.js?v=3c599048";
+import { h, clear, alertBox } from "./dom.js?v=5c78a8cd";
+import { takeLanded, landingText, landingKindForPage } from "./landing-notice.js?v=f37507d8";
+import { initials } from "./format.js?v=a032fa17";
+import { buildAccount, wireAccountMenu } from "./account-menu.js?v=82a9e619";
+import { orderHeader, watchHeaderOrder } from "./header-order.js?v=a22712e8";
+
+// the Tab order of the top bar follows what is drawn, at every width (js/header-order.js)
+if (typeof document !== "undefined" && typeof window !== "undefined") watchHeaderOrder(document, window);
 
 export const api = createApi({ baseUrl: SUPABASE_URL, key: PUBLISHABLE_KEY, getToken: accessToken });
 export { describeError, isAuthFailure, currentSession, signOut };
@@ -40,30 +46,71 @@ export async function requirePoster(thisPage) {
   return { session, info: r.data };
 }
 
-// The right-hand side of the top bar. Signed-in employer: avatar + name + organization + Sign out. Anyone else: the "Register a Posting" call to action.
+// The landing note clears on the person's first real action on the page (October 5, 2026), so it does not sit above the work for the whole visit: on the search page, typing in one of the three boxes or a search the person started
+// finishing (search.js calls clearLandingNote; a search replayed by the sign-in handoff does not count, the person did nothing); on every other page, the first click or key press inside the page content (a save, a pause, a close,
+// any button or field), not on the note itself. No close button, no timer, nothing is announced when it goes. (js/landing-notice.js has the words.)
+let landingNoteOn = null;
+export function clearLandingNote() {
+  if (!landingNoteOn) return;
+  const { box, off } = landingNoteOn; landingNoteOn = null; off();
+  box.hidden = true; clear(box);
+}
+// The one-time note on the page a sign-in link lands on (landing-notice.js). The first page that builds the top bar after the link shows it, once, in #landedNotice or at the top of the main area.
+function showLandingNote(session) {
+  if (!session) return;
+  const flag = takeLanded(sessionStorage);
+  if (!flag) return;   // no sign-in link just landed here
+  // the wording follows the PAGE (employer pages: the employer sentence; search: the candidate sentence), and only when the session really has that role: an employer-only session on the search page gets no landing note, because the
+  // search page already says plainly that an employer session cannot search (one notice, not two). A page that is neither kind falls back on the flag the callback left.
+  const kind = landingKindForPage(location.pathname, location.search) || flag;
+  const text = kind === "candidate" && session.isCandidate ? landingText("candidate") : kind === "poster" && session.isPoster ? landingText("poster") : null;
+  if (!text) return;
+  let box = document.getElementById("landedNotice");
+  if (!box) {
+    const main = document.getElementById("main"); if (!main) return;
+    box = h("div", { id: "landedNotice", class: "pg", style: "padding:24px 32px 0 32px;max-width:1440px;margin:0 auto;" });
+    main.insertBefore(box, main.firstChild);
+  }
+  box.hidden = false; clear(box); box.append(alertBox("ok", text));
+  const onAct = (ev) => { const main = document.getElementById("main"), t = ev.target; if (t && t.nodeType === 1 && main && main.contains(t) && !box.contains(t)) clearLandingNote(); };
+  const off = () => { for (const t of ["click", "keydown"]) document.removeEventListener(t, onAct, true); };
+  landingNoteOn = { box, off };
+  if (!/search\.html$/.test(location.pathname)) for (const t of ["click", "keydown"]) document.addEventListener(t, onAct, true);   // the search page clears it from search.js (typing, or a search the person started)
+}
+
+// The right-hand side of the top bar. Signed-in employer: the links, the initials circle (the control: name and organization are its accessible name and its label, see account-menu.js) and Sign out.
+// Anyone else: the "Register a Posting" call to action.
 export async function mountAccount(container, { cta = true } = {}) {
   clear(container);
   const session = await currentSession();
+  showLandingNote(session);
   if (session && session.isPoster) {
     const r = await posterInfo(session);
     const name = r.ok ? r.data.poster.full_name : "Employer";
     const org = r.ok ? r.data.organization.name : "";
+    const account = buildAccount(h, initials, name, org);
+    container.classList.add("nav-acct-area");
     container.append(
-      h("a", { class: "btn btn-outline btn-sm", href: "dashboard.html", style: "margin-right:14px;" }, "My postings"),
-      h("a", { class: "btn btn-outline btn-sm", href: "analytics.html", style: "margin-right:14px;" }, "Analytics"),
-      r.ok && r.data.poster.is_org_admin ? h("a", { class: "btn btn-outline btn-sm", href: "team.html", style: "margin-right:14px;" }, "Team") : null,
-      h("span", { class: "nav-account" }, h("span", { class: "avatar" }, initials(name)), name + (org ? " · " + org : "")),
-      h("button", { type: "button", class: "btn btn-ghost btn-sm", style: "margin-left:14px;", onclick: async () => { await signOut(); forgetLocalState(); go("index.html"); } }, "Sign out"),
+      h("a", { class: "btn btn-outline btn-sm", href: "dashboard.html" }, "My openings"),
+      h("a", { class: "btn btn-outline btn-sm", href: "analytics.html" }, "Analytics"),
+      r.ok && r.data.poster.is_org_admin ? h("a", { class: "btn btn-outline btn-sm", href: "team.html" }, "Team") : null,
+      account.root,
+      h("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: async () => { await signOut(); forgetLocalState(); go("index.html"); } }, "Sign out"),
     );
+    wireAccountMenu(account, document);
+    orderHeader(document, window);
     return session;
   }
   if (session && session.isCandidate) {
+    container.classList.add("nav-acct-area");
     container.append(
-      h("span", { style: "font-size:13px;color:var(--muted);margin-right:14px;" }, "Email verified"),
+      h("span", { style: "font-size:13px;color:var(--muted);" }, "Email confirmed"),
       h("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: async () => { await signOut(); go("index.html"); } }, "Sign out"),
     );
+    orderHeader(document, window);
     return session;
   }
-  if (cta) container.append(h("a", { class: "btn btn-primary btn-sm", href: "register.html" }, "Register a Posting →"));
+  if (cta) container.append(h("a", { class: "btn btn-primary btn-sm", href: "register.html" }, "Add an Opening →"));
+  orderHeader(document, window);
   return session;
 }

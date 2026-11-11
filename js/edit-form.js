@@ -4,8 +4,10 @@
 // NEW req number in the same edit; a changed requirements text must keep at least 90% of the stored wording (and 75% of the go-live text), a changed title 60%: those three are judged by the server, which answers 409.
 // Company name, dates, tier and the closeout condition are never editable.
 
-import { problems as locationProblems } from "./location-rules.js";
-import { aiNoteProblem } from "./ai-notes.js";
+import { problems as locationProblems } from "./location-rules.js?v=d6656595";
+import { aiNoteProblem } from "./ai-notes.js?v=35c5dc92";
+import { intentProblem, intentChange, INTENT_FIELD_IDS } from "./intent-statement.js?v=d37f2b4b";
+import { PLACE_FIELD, collapsePlaceText, placeTextProblem, storedPlaceText } from "./place-text.js?v=cb5d7506";
 
 export const MAX_NOTE = 500, MAX_DESC = 20000, MAX_REQ = 100;
 export const MAX_APPLICANT_CAP = 2147483647;
@@ -14,6 +16,8 @@ export const MAX_APPLICANT_CAP = 2147483647;
 export const FIELD_OF_SERVER_NAME = {
   title: "jtitle", req_number: "req", description_text: "desc", location_ids: "locpicker", is_remote: "locpicker", locations_attested: "attest", applicant_cap: "appcap", change_note: "note",
   ai_filtering_note: "aiFilterNote", ai_interview_note: "aiInterviewNote", req_searchable: "reqSearchToggle",
+  [PLACE_FIELD]: "loctext",      // prompt BH: the typed place
+  ...INTENT_FIELD_IDS,           // prompt ST1: the kind of opening (intentSelect) and its date (intentDate)
 };
 
 // how req numbers are compared everywhere (case, spaces and punctuation ignored)
@@ -23,7 +27,7 @@ const sameList = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === 
 const hasControl = (s) => Array.from(String(s)).some((ch) => { const c = ch.codePointAt(0); return c < 32 || c === 127; });
 
 // orig: the posting object get-my-posting returned.
-// v: { title, req, desc, locEntries, attested, remote, appcap, aiFilter, aiInterview, recruiter, reqSearchable, exclusive, note }     (aiFilter / aiInterview: true, false or null = never stated and not touched;
+// v: { title, req, desc, locEntries, attested, remote, outside, locText, appcap, aiFilter, aiInterview, recruiter, reqSearchable, exclusive, note }     (outside: "A place outside the US or not in the list" is chosen, so locText is the place and locEntries is empty)     (aiFilter / aiInterview: true, false or null = never stated and not touched;
 //   reqSearchable: true / false, the req-number search toggle (pass 26), default true; exclusive: true / false, or undefined = the employer's plan does not offer it, so it is not touched)
 // -> the fields that changed, by their backend names.
 export function changedFields(orig, v) {
@@ -34,6 +38,9 @@ export function changedFields(orig, v) {
   if (desc !== String(orig.description_text).trim()) ch.description_text = desc;
   const ids = (Array.isArray(v.locEntries) ? v.locEntries : []).map((e) => e.id);
   if (!sameList(ids, orig.location_ids)) ch.location_ids = ids;
+  // the typed place (prompt BH): a place outside the US list is text; the list's places and a typed place are never both, so choosing one sends the other cleared (the backend refuses both)
+  const typed = v.outside === true ? collapsePlaceText(v.locText) : null, wasTyped = storedPlaceText(orig) || null;
+  if (typed !== wasTyped) ch[PLACE_FIELD] = typed;
   if ((v.remote === true) !== orig.is_remote) ch.is_remote = v.remote === true;
   const attested = ids.length >= 2 && v.attested === true;
   if (attested !== orig.locations_attested) ch.locations_attested = attested;
@@ -44,6 +51,8 @@ export function changedFields(orig, v) {
   if (fNote !== (orig.ai_filtering_note == null ? null : orig.ai_filtering_note)) ch.ai_filtering_note = fNote;
   const iNote = v.aiInterview === true ? (String(v.aiInterviewNote == null ? "" : v.aiInterviewNote).trim() || null) : null;
   if (iNote !== (orig.ai_interview_note == null ? null : orig.ai_interview_note)) ch.ai_interview_note = iNote;
+  // the kind of opening (prompt ST1): v.intent is undefined while the page has no such box (then nothing is sent); "" is not stated. Only what changed is sent; taking it away sends the word not_stated.
+  if (v.intent !== undefined) Object.assign(ch, intentChange({ intent_statement: orig.intent_statement, intent_date: orig.intent_date }, v.intent, v.intentDate));
   if ((v.recruiter === true) !== orig.third_party_recruiter) ch.third_party_recruiter = v.recruiter === true;
   if ((v.reqSearchable !== false) !== (orig.req_searchable !== false)) ch.req_searchable = v.reqSearchable !== false;
   if (typeof v.exclusive === "boolean" && v.exclusive !== (orig.destination_links_exclusive === true)) ch.destination_links_exclusive = v.exclusive;
@@ -52,7 +61,7 @@ export function changedFields(orig, v) {
   return ch;
 }
 
-export const LOCATION_GROUP = ["location_ids", "is_remote", "locations_attested"];
+export const LOCATION_GROUP = ["location_ids", "is_remote", "locations_attested", PLACE_FIELD];
 
 // -> { errors: { fieldInputId: message, form?: message }, changed, body?: { posting_id, ...changed, change_note? } }
 export function checkEdit(orig, v) {
@@ -67,17 +76,19 @@ export function checkEdit(orig, v) {
   const capText = String(v.appcap == null ? "" : v.appcap).trim();
   if (capText !== "" && (!/^[0-9]+$/.test(capText) || Number(capText) < 1 || Number(capText) > MAX_APPLICANT_CAP)) e.appcap = "The cap must be a whole number of 1 or more, or left empty.";
   const chosen = Array.isArray(v.locEntries) ? v.locEntries : [];
-  if (v.remote !== true && chosen.length === 0) e.locpicker = "Choose a location from the list, or tick Remote role.";
+  if (v.outside === true) { if (PLACE_FIELD in changed) { const p = placeTextProblem(changed[PLACE_FIELD]); if (p) e.loctext = p; } }      // an unchanged typed place (for example one staged from the board) is not judged again
+  else if (v.remote !== true && chosen.length === 0) e.locpicker = "Choose a location from the list, or tick Remote role.";
   else Object.assign(e, locationProblems(chosen, v.remote === true, v.attested === true));
   if (v.aiFilter === true) { const p = aiNoteProblem(String(v.aiFilterNote == null ? "" : v.aiFilterNote).trim()); if (p) e.aiFilterNote = p; }
   if (v.aiInterview === true) { const p = aiNoteProblem(String(v.aiInterviewNote == null ? "" : v.aiInterviewNote).trim()); if (p) e.aiInterviewNote = p; }
+  if (v.intent !== undefined) { const p = intentProblem(v.intent, v.intentDate); if (p) e.intentDate = p; }      // prompt ST1
   const note = String(v.note == null ? "" : v.note).trim();
   if (note.length > MAX_NOTE) e.note = "Keep the note to " + MAX_NOTE + " characters or fewer.";
   else if (hasControl(note)) e.note = "Keep the note to plain text.";
   const keys = Object.keys(changed);
   if (keys.length === 0) { e.form = "Nothing has changed."; return { errors: e, changed }; }
   if (!isDraft) {
-    if (note === "" && !e.note) e.note = "Say what changed and why. The note is required and is kept with the posting.";
+    if (note === "" && !e.note) e.note = "Say what changed and why. The note is required and is kept with the opening.";
     if (keys.some((k) => LOCATION_GROUP.includes(k))) {
       if (!("req_number" in changed) || reqKey(changed.req_number) === reqKey(orig.req_number)) e.req = "Changing the location, the remote flag or the one-opening statement needs a new req number. Enter one and say what changed in the note.";
     }
@@ -97,7 +108,7 @@ export function mapEditErrors(err) {
   if (code === "text_changed_too_much" || code === "text_drifted_too_far") { byField.desc = err.message || "This edit changes most of the requirements."; newPosting = true; }
   else if (code === "title_changed_too_much") { byField.jtitle = err.message || "This edit changes most of the title."; newPosting = true; }
   else if (code === "location_change_needs_new_req") byField.req = err.message || "Changing the location needs a new req number.";
-  else if (code === "duplicate_req") { byField.note = err.message || "This company already has a posting with this req number. Add a short note saying why it is being reused, then save again."; needNote = true; }
+  else if (code === "duplicate_req") { byField.note = err.message || "This company already has an opening with this req number. Add a short note saying why it is being reused, then save again."; needNote = true; }
   else {
     const list = Array.isArray(err.errors) && err.errors.length ? err.errors : err.field ? [{ field: err.field, message: err.message || "Not accepted." }] : [];
     for (const x of list) { const id = FIELD_OF_SERVER_NAME[x.field]; if (id) { if (!byField[id]) byField[id] = x.message; } else if (!general) general = x.message; }
@@ -107,6 +118,21 @@ export function mapEditErrors(err) {
 }
 
 // what an edit is called in the change list (the kind the backend logged)
+// prompt BJ (October 11, 2026): the automatic summary stored for a draft edit reads "edit-posting: changed title, source_location_text": a function and column names. An employer must never read those, so every
+// line of Recent changes goes through this before it is drawn (the stored text is not changed: older rows read the same way). Any other note is the employer's own words or one of the fixed plain sentences.
+const CHANGE_FIELD_WORDS = { title: "job title", req_number: "req number", description_text: "job description", location_ids: "place", locations: "place", [PLACE_FIELD]: "place", is_remote: "place", locations_attested: "place",
+  ai_filtering: "AI filtering answer", ai_interview_other: "AI interviewing answer", ai_filtering_note: "AI filtering note", ai_interview_note: "AI interviewing note", ai_disclosure_shown: "AI disclosure", third_party_recruiter: "recruiter involved",
+  req_searchable: "req number search", destination_links_exclusive: "applications only through the links", applicant_cap: "applicant cap",
+  intent_statement: "kind of opening", intent_date: "kind of opening" };
+export function plainChangeNote(note) {
+  const raw = String(note == null ? "" : note);
+  const m = /^edit-posting: changed (.+)$/.exec(raw.trim());
+  if (!m) return raw;
+  const words = [];
+  for (const f of m[1].split(",")) { const w = Object.prototype.hasOwnProperty.call(CHANGE_FIELD_WORDS, f.trim()) ? CHANGE_FIELD_WORDS[f.trim()] : "other details"; if (!words.includes(w)) words.push(w); }
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  return words.length === 1 ? cap(words[0]) + " changed" : "Changed: " + (words.length === 2 ? words.join(" and ") : words.slice(0, -1).join(", ") + " and " + words[words.length - 1]) + ".";
+}
 export const KIND_TEXT = { draft_edit: "Draft edit", edit: "Edit", text_correction: "Requirements text corrected", req_change: "Req number changed", location_change: "Location changed" };
 
 // ---- destination links (verified plan). set-destination-links replaces the WHOLE set (1 to 10 addresses); the addresses are write-only (never sent back), so the page asks for the full set again to change it.
@@ -138,6 +164,15 @@ export function checkLinks(rows) {
   else if (used > MAX_LINKS) out.form = "Up to " + MAX_LINKS + " destination links.";
   out.ok = !out.form && Object.keys(errors).length === 0;
   return out;
+}
+
+// prompt BC (October 10, 2026): the address rules in one place for the rows' edit forms: https, a real address, at most 2048 characters. -> an error sentence, or null when the address is fine
+export function addressProblem(text) {
+  const url = String(text == null ? "" : text).trim();
+  if (url.length > MAX_URL) return "Keep the address to " + MAX_URL + " characters or fewer.";
+  if (!/^https:\/\//i.test(url)) return "The address must start with https://";
+  try { const u = new URL(url); if (u.protocol === "https:" && u.hostname !== "") return null; } catch { /* not an address */ }
+  return "That does not look like a web address.";
 }
 
 // ---- recruiter firms (pass C): the same call replaces the posting's whole set of named firms (kind = recruiter): 1 to 3 rows of { name, url? }; the name is required, the link optional.
@@ -177,7 +212,7 @@ export function mapLinksErrors(err, rowOf) {
   const rows = {}; let general = null;
   if (!err) return { rows, general: "Something went wrong.", planRequired: false, recruiterOff: false };
   if (err.code === "plan_required") return { rows, general: err.message || "Destination links are part of the destination links tier. Your organization is not on it (or the tier has ended), so nothing was changed.", planRequired: true, recruiterOff: false };
-  if (err.code === "recruiter_off") return { rows, general: err.message || "Recruiter firms can be named only while the posting says a third-party recruiter is involved. Turn that on and save the posting first.", planRequired: false, recruiterOff: true };
+  if (err.code === "recruiter_off") return { rows, general: err.message || "Recruiter firms can be named only while the opening says a third-party recruiter is involved. Turn that on and save the opening first.", planRequired: false, recruiterOff: true };
   const list = Array.isArray(err.errors) && err.errors.length ? err.errors : err.field ? [{ field: err.field, message: err.message || "Not accepted." }] : [];
   for (const x of list) {
     const m = /^links\[(\d+)\]\.(url|label|name)/.exec(x.field);
@@ -194,17 +229,18 @@ export function checkWarnings(links) {
   const bad = (Array.isArray(links) ? links : []).filter((l) => l && l.check_status === "failed");
   if (!bad.length) return null;
   const one = (l) => "link " + l.position + (Number.isInteger(l.check_http) ? " answered HTTP " + l.check_http : " could not be reached");
-  return "When we checked, " + bad.map(one).join("; ") + ". " + (bad.length === 1 ? "It is saved anyway — make sure it is right." : "They are saved anyway — make sure they are right.");
+  return "When we checked, " + bad.map(one).join("; ") + ". " + (bad.length === 1 ? "It is saved anyway. Make sure it is right." : "They are saved anyway. Make sure they are right.");
 }
 
 // How a stored link reads on the employer's own page: their label (a private note, never shown to candidates) and the text candidates actually see for it
 export function storedLinkText(x) {
-  if (x.kind === "recruiter") return x.position + ". " + x.firm + (x.shown_as ? " — with a link, shown as “" + x.shown_as + "”" : " — no link") + (x.check_status === "failed" ? " (did not answer when we checked" + (Number.isInteger(x.check_http) ? ": HTTP " + x.check_http : "") + ")" : "");
-  return x.position + ". " + (x.label ? x.label + " — " : "") + "candidates see “" + (x.shown_as || "Application link " + x.position) + "”"
+  if (x.kind === "recruiter") return x.position + ". " + x.firm + (x.shown_as ? ", with a link, shown as “" + x.shown_as + "”" : ", no link") + (x.check_status === "failed" ? " (did not answer when we checked" + (Number.isInteger(x.check_http) ? ": HTTP " + x.check_http : "") + ")" : "");
+  return x.position + ". " + (x.label ? x.label + ", " : "") + "candidates see “" + (x.shown_as || "Application link " + x.position) + "”"
     + (x.check_status === "failed" ? " (did not answer when we checked" + (Number.isInteger(x.check_http) ? ": HTTP " + x.check_http : "") + ")" : "");
 }
 // the two kinds a stored set holds (get-my-posting lists both together); an answer from before pass C has no kind and is all application links
-export const applyLinks = (list) => (Array.isArray(list) ? list : []).filter((x) => x.kind !== "recruiter");
+// (prompt BA, October 10, 2026: a third kind, "policy", the AI and hiring policy link; it is neither an application link nor a firm and has its own box, js/policy-link.js)
+export const applyLinks = (list) => (Array.isArray(list) ? list : []).filter((x) => x.kind === undefined || x.kind === "apply");
 export const recruiterFirms = (list) => (Array.isArray(list) ? list : []).filter((x) => x.kind === "recruiter");
 
 // What the page says about the plan. plan: what get-my-posting / poster-session returned.

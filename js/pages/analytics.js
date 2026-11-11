@@ -2,12 +2,12 @@
 // employer-analytics, which the server scopes to the signed-in session's organization -- this page never asks for, stores, or displays anyone else's numbers.
 // "Unmatched company-intent searches" (the sixth metric in the original brief) is not shown here: it is not computed yet (see pass24-migration.sql for why).
 
-import { api, requirePoster, mountAccount, go, signOut, describeError, isAuthFailure } from "../app.js";
-import { rememberNext } from "../session.js";
-import { $, h, clear, alertBox } from "../dom.js";
-import { waitText, plural } from "../format.js";
-import { statusChip } from "../dashboard-model.js";
-import { DEFAULT_RANGE_DAYS, rangeToDates, sharePctLabel, clickThroughPct, clickThroughLabel, searchModeBreakdown, linkBreakdown, isThinData } from "../analytics-model.js";
+import { api, requirePoster, mountAccount, go, signOut, describeError, isAuthFailure } from "../app.js?v=0fdd7197";
+import { rememberNext } from "../session.js?v=3c599048";
+import { $, h, clear, alertBox } from "../dom.js?v=5c78a8cd";
+import { waitText, plural } from "../format.js?v=a032fa17";
+import { statusChip } from "../dashboard-model.js?v=8b1fedbe";
+import { DEFAULT_RANGE_DAYS, rangeToDates, sharePctLabel, clickThroughPct, clickThroughLabel, searchModeBreakdown, linkBreakdown, isThinData } from "../analytics-model.js?v=92224b01";
 
 const state = { rangeDays: DEFAULT_RANGE_DAYS };
 
@@ -32,11 +32,11 @@ const LINK_CLICK_CAVEAT = "Reflects activity on the link shown here, not a compl
 function renderKpis(d) {
   const box = $("#kpiRow"); clear(box);
   box.append(
-    kpiCard("Live postings", String(d.live_postings)),
+    kpiCard("Live openings", String(d.live_postings)),
     kpiCard("Searches that found you", String(d.searches)),
-    kpiCard("Posting detail views", String(d.detail_views)),
-    kpiCard("Destination link clicks", String(d.link_clicks), clickThroughLabel(d.detail_views, d.link_clicks) === "—" ? null : clickThroughLabel(d.detail_views, d.link_clicks) + " of viewers clicked through", LINK_CLICK_CAVEAT),
-    kpiCard("Share of registry traffic", sharePctLabel(d.share_of_registry_pct), "Of all searches + detail views on the registry"),
+    kpiCard("Opening detail views", String(d.detail_views)),
+    kpiCard("Destination link clicks", String(d.link_clicks), clickThroughLabel(d.detail_views, d.link_clicks) === "n/a" ? null : clickThroughLabel(d.detail_views, d.link_clicks) + " of viewers clicked through", LINK_CLICK_CAVEAT),
+    kpiCard("Share of FightGhostJobs traffic", sharePctLabel(d.share_of_registry_pct), "Of all searches + detail views on FightGhostJobs"),
   );
 }
 
@@ -44,12 +44,12 @@ function postingRow(p) {
   const chip = statusChip(Object.assign({}, p, { bump_used: false }), Date.now());
   const ct = clickThroughLabel(p.detail_views, p.link_clicks);
   const w = clickThroughPct(p.detail_views, p.link_clicks) || 0;
-  return h("tr", {},
-    h("td", { style: "font-weight:600;" }, p.title, h("div", { style: "font-size:12px;font-weight:400;color:var(--muted);margin-top:3px;" }, h("span", { class: "status " + chip.cls, style: "padding:2px 8px;font-size:11px;" }, chip.text))),
-    h("td", {}, String(p.searches)),
-    h("td", {}, String(p.detail_views)),
-    h("td", {}, String(p.link_clicks)),
-    h("td", { style: "width:160px;" }, ct === "—" ? h("span", { style: "color:var(--faint);" }, "—") :
+  return h("tr", { role: "row" },
+    h("td", { role: "cell", "data-label": "Opening", style: "font-weight:600;" }, p.title, h("div", { style: "font-size:12px;font-weight:400;color:var(--muted);margin-top:3px;" }, h("span", { class: "status " + chip.cls, style: "padding:2px 8px;font-size:11px;" }, chip.text))),
+    h("td", { role: "cell", "data-label": "Searches" }, String(p.searches)),
+    h("td", { role: "cell", "data-label": "Detail views" }, String(p.detail_views)),
+    h("td", { role: "cell", "data-label": "Link clicks" }, String(p.link_clicks)),
+    h("td", { role: "cell", "data-label": "Click-through", style: "width:160px;" }, ct === "n/a" ? h("span", { style: "color:var(--faint);" }, "n/a") :
       h("div", { style: "display:flex;align-items:center;gap:8px;" },
         h("div", { class: "bar-track", style: "width:80px;" }, h("div", { class: "bar-fill", style: "width:" + w + "%;" })),
         h("span", { style: "font-size:13px;font-weight:600;" }, ct))));
@@ -59,7 +59,7 @@ function renderPostingTable(byPosting) {
   const body = $("#postingRows"); clear(body);
   const empty = $("#postingEmpty");
   if (byPosting.length === 0) {
-    empty.hidden = false; clear(empty); empty.append("No postings recorded any activity in this date range.");
+    empty.hidden = false; clear(empty); empty.append("No openings recorded any activity in this date range.");
     $("#postingTable").hidden = true;
     return;
   }
@@ -77,7 +77,7 @@ function renderSearchModes(byMode) {
   const rows = searchModeBreakdown(byMode);
   const card = $("#modeCard"), empty = $("#modeEmpty");
   clear(card);
-  if (rows.length === 0) { card.hidden = true; empty.hidden = false; clear(empty); empty.append("No searches matched one of your postings in this date range."); return; }
+  if (rows.length === 0) { card.hidden = true; empty.hidden = false; clear(empty); empty.append("No searches matched one of your openings in this date range."); return; }
   card.hidden = false; empty.hidden = true;
   for (const r of rows) card.append(breakdownRow(r.label, r.pct + "%", r.pct, false));
 }
@@ -95,7 +95,7 @@ function renderThinData(d) {
   const note = $("#thinDataNote");
   if (isThinData(d.platform_activity_total)) {
     note.hidden = false; clear(note);
-    note.append(alertBox("notice", "Registry-wide activity is still limited in this date range, so the numbers above (especially share of registry traffic) may swing a lot from one period to the next. This will settle down as more candidates use the registry."));
+    note.append(alertBox("notice", "Activity across FightGhostJobs is still limited in this date range, so the numbers above (especially the share of FightGhostJobs traffic) may swing a lot from one period to the next. This will settle down as more candidates use FightGhostJobs."));
   } else note.hidden = true;
 }
 

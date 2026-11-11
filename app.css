@@ -3,6 +3,11 @@
 
 [hidden]{display:none!important}
 a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,.info-icon:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+/* BK focus: the button a dialog gives the cursor to when it opens (js/focus-ring.js): the same ring as above, drawn at once, because a focus set by script after a mouse click is not "visible" to the browser. */
+button.focus-ring,a.focus-ring{outline:2px solid var(--ember);outline-offset:2px}
+/* BG focus: a script moves focus to a sentence or a box that is not a control (tabindex="-1") so a screen reader reads it; that focus is not drawn. Buttons, links and fields keep their ring (the rule above). */
+[tabindex="-1"]:not(a):not(button):not(input):not(select):not(textarea):not(summary):focus,
+[tabindex="-1"]:not(a):not(button):not(input):not(select):not(textarea):not(summary):focus-visible{outline:none}
 button[disabled],.btn[disabled]{opacity:.55;cursor:not-allowed}
 input[type="text"],input[type="email"],input[type="number"]{border:1px solid var(--line);border-radius:8px;padding:11px 14px;font-size:14px;width:100%;font-family:'Work Sans',sans-serif;background:#fff;color:var(--ink)}
 textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:11px 14px;font-size:14px;font-family:'Work Sans',sans-serif;resize:vertical;background:#fff;color:var(--ink)}
@@ -48,12 +53,50 @@ input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:var(--embe
 .modal-backdrop.open{display:flex}
 .modal{background:#fff;border-radius:16px;width:480px;max-width:92vw;max-height:80vh;overflow-y:auto;padding:32px}
 .source-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border-radius:10px;padding:14px 16px;margin-top:10px;cursor:pointer;border:none;width:100%;text-align:left;font-family:inherit;color:var(--ink)}
-.source-row .go{font-size:13px;font-weight:700;color:var(--ember)}
-.source-row-label{font-size:14px;font-weight:600}
+.source-row .go{font-size:13px;font-weight:700;color:var(--ember);flex:0 0 auto;white-space:nowrap}
+.source-row .go-open{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.source-row .go-icon{flex:none;display:block}
+.source-row-label{font-size:14px;font-weight:600;min-width:0;overflow-wrap:anywhere;margin-right:12px}
+/* prompt LM (October 23, 2026): the Registered mark with its "i", the Links heading with its "i", the pills that are buttons, the tile's Comments link and the small box behind an "i" (js/info-box.js; it reuses .modal and .modal-backdrop) */
+.reg-holder{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.links-head{display:flex;align-items:center;gap:8px;margin-top:18px}
+.links-head[hidden]{display:none}
+.links-heading{margin:0;font-size:15px;font-weight:700}
+.info-box-icon{cursor:pointer}
+.chip-button{border:0;font-family:inherit;color:inherit;cursor:pointer;text-align:left;line-height:inherit}
+.chip-button:hover{background:#ECE7DC}
+.chip-button:disabled{cursor:default;opacity:.75}
+.chip-button::before{content:"";position:absolute;inset:-6px 0}
+.chip-i{cursor:pointer}
+.tile-comments{font-size:14px;font-weight:600;color:var(--ember);white-space:nowrap;display:inline-flex;align-items:center;min-height:32px}
+.tile-comments-main{text-decoration:none}
+.info-box{width:440px}
+.info-box-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.info-box-title{font-size:17px;font-weight:700}
+.info-box-body{font-size:14px;color:var(--muted);line-height:1.6;margin-top:12px;overflow-wrap:anywhere}
+/* prompt JB (November 7, 2026): the "i" of the search page (at the heading and in the recap box) and the sections of its box */
+.srch-title-row{display:flex;align-items:center;gap:12px}
+.srch-title-row h1{margin:0}
+.info-slot{display:inline-flex;align-items:center;flex:none}
+.recap-actions{display:inline-flex;align-items:center;gap:12px;flex:none}
+.info-box-body .info-section{font-size:14px;font-weight:700;color:var(--ink);margin:16px 0 6px 0}
+.info-box-body .info-section:first-child{margin-top:0}
+.info-box-body .info-para{margin:0 0 8px 0}
 .empty-note{font-size:14px;color:var(--muted);line-height:1.6;background:var(--panel);border-radius:10px;padding:14px 16px;margin-top:16px}
+.refine-hint{font-size:14px;color:var(--muted);line-height:1.6;margin:0 0 16px}
+.refine-hint p{margin:0 0 6px}
 .result-count{font-size:13px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
 .code-box{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;letter-spacing:.06em;background:var(--panel);border-radius:10px;padding:14px 18px;display:inline-block}
-.nav-account+.btn{margin-left:14px}
+/* the employer's ID block (prompt BQ): the ID, the short link and the job ad lines, each with a copy button; text only, never a field */
+.kio-block{display:flex;flex-direction:column;gap:10px;margin-top:12px;max-width:640px}
+.kio-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.kio-label{font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;min-width:96px}
+.kio-value{font-size:15px;font-weight:600;color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.kio-copy{min-height:36px;padding:8px 14px}
+.kio-ad{display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:var(--panel);border-radius:10px;padding:12px 14px}
+.kio-adlines{font-size:14px;line-height:1.6;color:var(--ink);overflow-wrap:anywhere;user-select:all}
+.kio-note{font-size:13px;line-height:1.6;color:var(--muted);margin:0}
+@media (max-width:760px){.kio-copy{min-height:44px}.kio-label{min-width:0;flex:0 0 100%}}
 
 /* location picker (register form) */
 .loc-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
@@ -84,6 +127,104 @@ a.row-action:hover{text-decoration:underline}
 .dash-table td{padding:14px 12px}
 .dash-table .row-action:first-child{margin-left:0}
 
+/* My openings (prompt BL, October 11, 2026): the table is a plain auto-layout table that uses the width of the card, and the card the width of the window (up to the page's 1800 pixel cap in dashboard.html).
+   Title and Actions are the columns that give first: the Title column keeps a readable minimum, long titles and place lines wrap inside it; every note in the Actions cell wraps at a fixed width, and each action word
+   stays on one line (it wraps between words, never inside one). Only the table with the class my-openings: the Team and Traffic tables share dash-table and rtable and are not touched. */
+@media (min-width:641px){
+  .my-openings thead th:first-child,.my-openings td[data-label="Title"]{min-width:11rem}
+  .my-openings td[data-label="Title"]{overflow-wrap:anywhere}
+  .my-openings td[data-label="Actions"]{white-space:normal}
+  .my-openings td[data-label="Actions"] .row-action{white-space:nowrap}
+  .my-openings .act-note{max-width:24ch;white-space:normal;overflow-wrap:break-word}
+  .my-openings .act-note .note-link{margin-left:0;display:inline;font-size:inherit}
+}
+
+/* My openings, tidied (prompt BN, October 11, 2026). Same table, same scope (.my-openings, 641 pixels and wider; the phone card list above is not touched).
+   Actions: the words sit side by side with an even gap on the RIGHT of each word (no left margin, so a word that has to wrap starts at the left edge of the next line, not indented); the last word has no gap after it.
+   Dates: every date and time is a no-wrap piece (.nb), so a line may break between "Nov 25," and "7:38 AM EST" but never inside one. The note: its own width, nothing else is held to it.
+   Room: the side padding of the cells is 8 pixels instead of 12 on this table only (nine columns only just fit). */
+@media (min-width:641px){
+  .my-openings thead th,.my-openings td{padding-left:8px;padding-right:8px}
+  .my-openings td[data-label="Actions"] .row-action{margin:0 14px 0 0}
+  .my-openings td[data-label="Actions"] .row-action:last-child{margin-right:0}
+  .my-openings .nb{white-space:nowrap}
+  .my-openings .act-note{max-width:36ch}
+}
+/* My openings reworked (prompt BP, October 11, 2026): the table has seven columns at most (Title, Req #, Opening ID, Status, Actions, Closes, Comments). Drawn at its roomiest: the Actions, Closes, Opening ID and Comments
+   columns take exactly what their words need (a no-wrap cell with a tiny preferred width shrinks to its content), Title, Req # and Status share what is left, and the expired-draft note keeps a block about 36 characters
+   wide. js/pages/dashboard.js fitTable() asks the browser whether that fits the card and, if not, adds "snug" (the note takes only the width the column has) and then "tight" (the columns share the width and the
+   pieces wrap between words and between a date and its time). The table is at most this wide because the browser says so, not because of a window size worked out elsewhere. */
+@media (min-width:641px){
+  .my-openings td[data-label="Actions"],.my-openings td[data-label="Closes"],.my-openings td[data-label="KIO ID"],.my-openings td[data-label="Comments"],.my-openings td[data-label="Status"]{width:1%;white-space:nowrap}
+  /* prompt BR (October 12, 2026): the Status pill is ONE box (inline-block with a modest radius), not a run of text with a background: when the column was narrow its words wrapped and the background was cut into
+     two clipped pieces. Now the Status column takes what the words need like Actions and Closes do; only at the "tight" level may the pill wrap, between words, and it stays one clean rounded box. */
+  .my-openings .act-note{min-width:36ch}
+  .my-openings.snug .act-note{min-width:0}
+  .my-openings.tight td[data-label="Actions"],.my-openings.tight td[data-label="Closes"],.my-openings.tight td[data-label="KIO ID"],.my-openings.tight td[data-label="Comments"]{width:auto;white-space:normal}
+  /* prompt BR: the level between snug and tight. The note has given up its width and the Status pills may wrap between words (each stays one rounded box); the dates still do not break. */
+  .my-openings.wrap-status thead th,.my-openings.wrap-status td{padding-left:6px;padding-right:6px}
+  .my-openings.wrap-status td[data-label="Status"] .status{padding-left:9px;padding-right:9px}
+  .my-openings.wrap-status td[data-label="Status"]{min-width:8.25rem}
+  .my-openings.wrap-status .act-note{min-width:0}
+  .my-openings.wrap-status td[data-label="Status"],.my-openings.tight td[data-label="Status"]{width:auto;white-space:normal}
+  .my-openings.tight .act-note{min-width:0}
+  .my-openings td{padding-top:10px;padding-bottom:10px}
+}
+/* prompt GP (October 30, 2026): a floor for the Closes column. At the "tight" level the browser shares the card width between the columns and gave Closes about 143 pixels at a 1093 pixel window (1078 of page), 12 to 15 pixels
+   short of the date plus the time ("Nov 3," and "7:59 PM EST") on one line, so the time dropped under the date for every row that has a time (which layout the browser picked changed with the time of day). The column now never
+   gets less than 14.5rem (232 pixels): 10rem (160) only fixed the rows with a date and a time, the scheduled row ("Goes live Nov 19," and the time, three no-wrap pieces) needs about 230 with the widest time text. The Title column
+   gives the width (it keeps its own floor of 11rem above). The header cell is in the same column, so the floor holds for it too. Only from a 1020 pixel window up: below that the Title column would have to go under its own 11rem
+   floor and the table would scroll sideways in its card (measured at 800 to 960), so there the dates keep wrapping between the day and the time as before. */
+@media (min-width:1090px){
+  .my-openings.tight td[data-label="Closes"]{min-width:14rem}
+  /* prompt GP, option C (October 31, 2026): at the "tight" level the side padding of the cells is 4 pixels (8 before; the wrap-status level has 6), about 56 pixels in all, and the Actions and Status columns have floors of their own
+     (14rem = 224 pixels: the action words of the widest row on one line; 7.25rem = 116 pixels: the longest Status pill in two lines, never three), so the Closes floor does not take their width. Added up at the smallest the columns
+     need 176 (Title) + 53 + 125 + 116 + 224 + 224 + 87 = about 1005 pixels; the card is 1014 pixels at a 1093 pixel window and the floors apply from a 1090 pixel window (card about 1011). Below that the table behaves as before. */
+  .my-openings.tight thead th,.my-openings.tight td{padding-left:4px;padding-right:4px}
+  .my-openings.tight td[data-label="Actions"]{min-width:14rem}
+  .my-openings.tight td[data-label="Status"]{min-width:7.25rem}
+}
+.my-openings td[data-label="Status"] .status{display:inline-block;border-radius:14px}      /* prompt BR: one box on every width (the phone card list too) */
+/* the small lines under a title and under a date: the place, the day it was added, the flag. The flag is dark amber (contrast 6.7 to 1 on white) and always carries words, never colour alone. */
+.row-sub{font-size:12px;font-weight:400;color:var(--muted);margin-top:2px}
+.row-flag{font-size:12px;font-weight:600;color:#8A4B00;margin-top:2px}
+.sort-box{display:flex;align-items:center;gap:8px}
+.sort-box label{font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}
+.sort-box select{border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px;font-family:'Work Sans',sans-serif;background:#fff;color:var(--ink);min-height:40px}
+.sort-box select:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+
+/* contested comments (item A): the notice block (shown to candidates and to the owner) and the owner's contest form. Ink on white inside a dark-ember border: far above 4.5:1; the border carries the meaning for forced-colors too. */
+.contest-notice{border:2px solid var(--ember-dark);border-left-width:8px;border-radius:10px;background:#fff;color:var(--ink);padding:12px 16px;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.contest-notice-tag{font-size:12px;font-weight:700;color:var(--ember-dark);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.contest-notice-text{margin:0}
+.contest-form{display:flex;flex-direction:column;gap:10px;margin-top:6px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.contest-fields{display:flex;flex-direction:column;gap:8px}
+.contest-form label{font-size:13px;font-weight:600;color:var(--ink)}
+.contest-form select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px;font-family:'Work Sans',sans-serif;background:#fff;color:var(--ink)}
+.contest-form select:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.contest-form select[aria-invalid="true"]{border-color:var(--ember-dark)}
+.intent-select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px;font-family:'Work Sans',sans-serif;background:#fff;color:var(--ink)}
+.intent-select:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.intent-note{margin-top:12px;padding:10px 14px;border-left:3px solid var(--line);font-size:14px;line-height:1.55;color:var(--ink)}
+.contest-confirm{display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.6}
+.contest-confirm-title{margin:0;font-weight:700}
+.contest-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+@media (max-width:480px){.contest-notice{padding:10px 12px;border-left-width:6px}.contest-form{padding:12px}.contest-actions .btn{flex:1 1 auto}}
+
+/* the destination links panel on the edit page (item 4): one bordered row per stored link, with its three buttons and, when opened, the edit form or the remove question (the form look is the contest form's) */
+.link-list{display:flex;flex-direction:column;gap:10px}
+.link-row{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fff}
+.link-row-top{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.link-row-main{min-width:0;flex:1 1 220px}
+.link-row-title{font-size:14px;font-weight:700;overflow-wrap:anywhere}
+.link-row-meta{font-size:13px;color:var(--muted);line-height:1.5;margin-top:2px;overflow-wrap:anywhere}
+.link-row-actions{display:flex;gap:8px;flex-wrap:wrap}
+.link-edit-title{font-size:14px;font-weight:700}
+.link-confirm{display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.6;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.link-confirm-text{margin:0;font-weight:600}
+.link-open{font-weight:600}
+@media (max-width:480px){.link-row{padding:10px 12px}.link-row-actions .btn{flex:1 1 auto}}
+
 /* the footer every page carries: the privacy page and the privacy contact (tests/site-check.js S22) */
 .site-footer{max-width:1440px;margin:0 auto;padding:28px 32px;border-top:1px solid var(--line);display:flex;gap:24px;align-items:center;font-size:13px;color:var(--faint)}
 .site-footer a{color:var(--faint)}
@@ -106,3 +247,205 @@ a.row-action:hover{text-decoration:underline}
 main a:not(.btn):not(td a){text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px}
 .mono{font-family:var(--font-mono);font-size:.92em;letter-spacing:0}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+/* ---- candidate search screen (search.html): guidance text above the form, and the form stacking on a narrow screen. Classes are prefixed srch- */
+.srch-guide{max-width:1080px;margin:8px 0 22px 0;font-size:15px;color:var(--muted);line-height:1.6}
+.srch-guide p{margin:0 0 6px 0}
+.srch-guide .srch-lead{color:var(--ink);font-weight:600}
+/* the phone entry (prompt IB): the panel above the form, the notes under the boxes, the list of other openings; every tap is at least 44 by 44 pixels; nothing is wider than the screen */
+.phone-panel{max-width:1080px;margin:0 0 12px 0}
+.phone-body{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--ember);border-radius:10px;padding:12px 14px;font-size:15px;line-height:1.55;color:var(--ink);overflow-wrap:anywhere}
+.phone-body p{margin:0}
+.phone-body p+p{margin-top:8px}
+.phone-body .phone-pick,.phone-body .phone-choice{min-height:44px;min-width:44px;box-sizing:border-box;vertical-align:middle}
+.phone-body .phone-pick{margin:0 2px;padding:8px 12px}
+.phone-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.phone-list-head{font-weight:600}
+.phone-body .phone-choice{width:100%;max-width:100%;justify-content:flex-start;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.phone-link{display:inline-block;min-height:44px;line-height:44px}
+.phone-note{font-size:12px;line-height:1.5;color:var(--ink);margin-top:6px;font-weight:600}
+/* prompt JE (November 8, 2026): the "check this" note inside the search box, under the three fields and above the optional line and Search; empty (and not drawn) until the phone entry sets it. A new class, not phone-note (the tests count phone-note). */
+.order-note{font-size:13px;line-height:1.5;font-weight:600;color:var(--ink);margin:6px 12px 2px 12px;padding:2px 0 2px 10px;border-left:3px solid var(--ember);overflow-wrap:anywhere}
+.order-note:empty{display:none}
+.phone-privacy{margin:0 0 14px 0}
+/* prompt JD (November 7, 2026): the optional "where you found this job" field under the search card: its own card of the same look, the label like the other boxes, the input a 44 pixel target at every width */
+/* prompt JK (November 7, 2026): the optional line is INSIDE the one white search box (the form), under the three fields, with the Search button last (to the right of everything on a wide screen, below it on a phone). It is no longer a card of its own: no border round it, no background; a thin line above it is the only divider. */
+.srch-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.srch-top{display:flex;gap:12px;flex:1}
+.srch-source{display:flex;flex-direction:column;box-sizing:border-box;margin:4px 12px 0 12px;padding:10px 0 8px 0;border-top:1px solid var(--line)}
+.srch-source[hidden]{display:none}
+.srch-source-label{font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.srch-opt{text-transform:uppercase;letter-spacing:.05em;font-weight:700;color:var(--ink);margin-right:4px}
+.srch-source-input{border:none;padding:4px 0;min-height:44px;box-sizing:border-box;width:100%;max-width:100%}
+/* prompt JL (November 8, 2026): the stacked layout of the search box holds up to 999 pixels (it switched at 760 before); the wide row, with the three fields side by side, starts at 1000 pixels, the smallest width where no label takes more than two lines and each of the three boxes is at least 180 pixels wide. In the stacked range above a phone the box is held to 640 pixels so the boxes do not stretch across a tablet. */
+@media (max-width:999px){.srch-form{flex-direction:column!important;max-width:640px!important}.srch-top{flex-direction:column!important}.srch-form .srch-sep{display:none}.srch-form .btn{align-self:flex-start;margin:4px 12px 8px 12px}}
+
+/* ---- edit page (edit.html): the unsaved-changes bar and the leave dialog. Classes are prefixed unsaved-.
+   The bar is the last child of <main> and sticky to the bottom of the window: it stays in view while there is more page below it, and at the end of the page it sits in the flow above the footer,
+   so it never covers the footer or the last field. html.unsaved-on keeps a field that takes focus clear of it (scroll-padding). On a narrow screen the text and the buttons stack and the buttons share the width. */
+.unsaved-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.unsaved-bar{position:sticky;bottom:0;z-index:30;background:var(--card);border-top:2px solid var(--ember);box-shadow:0 -6px 20px rgba(23,20,18,.10)}
+.unsaved-inner{max-width:1440px;margin:0 auto;padding:12px 64px;display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
+.unsaved-text{flex:1 1 320px;min-width:0;font-size:14px;line-height:1.5;color:var(--ink)}
+.unsaved-actions{display:flex;gap:12px;flex-wrap:wrap}
+html.unsaved-on{scroll-padding-bottom:140px}
+.unsaved-overlay{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50;background:rgba(23,20,18,.45);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+.unsaved-dialog{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;width:100%;max-width:480px;max-height:100%;overflow:auto;box-sizing:border-box;box-shadow:0 12px 40px rgba(23,20,18,.25)}
+.unsaved-dialog-title{font-size:18px;font-weight:700;margin:0 0 8px 0}
+.unsaved-dialog-text{font-size:14px;line-height:1.6;color:var(--ink);margin:0 0 18px 0}
+@media (max-width:720px){.unsaved-inner{padding:10px 16px}.unsaved-actions{width:100%}.unsaved-actions .btn{flex:1 1 auto;justify-content:center}.unsaved-dialog{padding:18px 16px}}
+
+/* the signed-in header (October 4, 2026): the initials circle is the control (js/account-menu.js); the name and organization are its accessible name and a small label, not text beside it.
+   The right-hand area wraps instead of squeezing the navigation, and the whole bar relaxes at narrow widths. */
+.nav-acct-area{gap:10px 14px;flex-wrap:wrap;justify-content:flex-end}
+.nav-account{position:relative}
+.avatar-btn{border:0;padding:0;cursor:pointer;font-family:inherit;position:relative}
+.avatar-btn::before{content:"";position:absolute;inset:-6px}
+.account-pop{display:none;position:absolute;top:calc(100% + 10px);right:0;z-index:30;width:max-content;max-width:min(280px,calc(100vw - 32px));box-sizing:border-box;background:var(--ink);color:#F4F1EA;font-size:13px;font-weight:500;line-height:1.5;padding:10px 12px;border-radius:8px;text-align:left;box-shadow:0 10px 24px -8px rgba(23,20,18,.35);overflow-wrap:anywhere}
+.account-pop-name{display:block;font-weight:700}
+.account-pop-org{display:block}
+.account-pop.open,.avatar-btn:focus-visible+.account-pop{display:block}
+@media (hover:hover){.nav-account:hover .account-pop{display:block}}
+.account-pop.dismissed{display:none!important}
+@media (max-width:1300px){.nav{padding:0 24px}.nav-links{gap:22px}.nav-acct-area{gap:8px 10px}.nav-acct-area .btn-sm{padding:9px 12px}}
+@media (max-width:1080px){.nav{height:auto;min-height:72px;flex-wrap:wrap;padding:12px 16px;gap:10px 16px}.nav-links{order:3;width:100%;gap:20px;flex-wrap:wrap}.nav-acct-area{margin-left:auto}}
+
+/* phone widths (October 4, 2026): at 640 pixels and below the top bar is three short rows instead of a stack that ran off the edge.
+   Row 1: the logo, then (signed in) the initials circle and Sign out, or (signed out) the Register button. Row 2 (signed in): My postings, Analytics, Team. Last row: the three links.
+   Every control has a 44 pixel touch target (the buttons keep a 36 pixel look; their invisible margin is measured from the padding box, inside the 1 or 1.5 pixel border, so it is 6 pixels above and below), the logo is smaller so it stays whole at 320, and nothing is allowed to push the bar wider than the window.
+   html text-size-adjust 100% stops a phone browser from inflating the header text (text autosizing), which would also make the rows wider than the window. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+@media (max-width:640px){
+  .nav{padding:6px 12px;gap:0 10px;justify-content:flex-start;align-items:center;min-height:0}
+  .nav-logo{order:1;min-height:44px;gap:6px;margin-right:auto;min-width:0}
+  .nav-mark{width:32px;height:32px}
+  .nav-wordmark{font-size:16px;white-space:nowrap}
+  .nav-links{order:5;width:100%;gap:0 6px;flex-wrap:wrap;justify-content:space-between}
+  .nav-links a{display:inline-flex;align-items:center;min-height:44px;font-size:14px}
+  #navAccount{order:2}
+  #navAccount .btn-sm{position:relative;min-height:36px;margin:4px 0;padding:8px 12px;justify-content:center}
+  #navAccount .btn-sm::before{content:"";position:absolute;inset:-6px 0}
+  #navAccount.nav-acct-area{display:contents!important}
+  #navAccount.nav-acct-area>*{order:4}
+  #navAccount.nav-acct-area>span{order:2}
+  #navAccount.nav-acct-area>.btn-ghost{order:3}
+  #navAccount.nav-acct-area::after{content:"";order:3;flex:0 0 100%;height:0}
+  .nav{position:relative}
+  .nav-account{position:static}
+  .account-pop{top:50px;right:12px;max-width:calc(100vw - 24px)}
+}
+@media (max-width:360px){.nav{padding:6px 8px}.nav-links a{font-size:13px}}
+/* the narrowest phones (320): "Search Openings" is a little wider than the old link text, so the gap between the three links is trimmed to keep them on one row */
+@media (max-width:340px){.nav-links{gap:0 2px}}
+
+/* the search fields (October 4, 2026): white on a white card with no border, they looked locked once filled in. Each of the three now has a bottom line at rest (#8A8379 on white: 3.7 to 1, above the 3 to 1 rule for interface
+   boundaries) and a heavier ember line plus the focus ring when focused. The page sets border:none inline, hence !important. The layout, labels, placeholders and the one white card are unchanged. */
+.srch-input{border-bottom:2px solid #8A8379!important;border-radius:0!important;padding-bottom:6px!important}
+.srch-input:focus{border-bottom-color:var(--ember-dark)!important;box-shadow:0 1px 0 0 var(--ember-dark)}
+/* the details window: a swipe on the dark backdrop does not scroll the page behind (js/scroll-lock.js locks the page itself); the window's own box still scrolls */
+.modal-backdrop{touch-action:none;overscroll-behavior:contain}
+.modal{touch-action:pan-y;overscroll-behavior:contain}
+
+/* hit areas (October 5, 2026): every link and control can be pointed at with a 24 x 24 CSS pixel target (WCAG 2.2, 2.5.8), as the audit asked, WITHOUT changing how anything looks: the drawn text, the spacing and the layout stay as they were.
+   A clear box, absolutely positioned and invisible, is added to each small control (the same device the initials circle and the phone rules use); the pointer and a finger hit it as part of the control. A drop-down list has no such box to
+   borrow, so it gets a real minimum height. Links that are words inside a sentence are exempt, as in the standard (their size is the line of text). On a phone the 44 pixel rules below still apply and win. */
+.nav-links a,.site-footer a,footer.wrapflex a,.hit,#modalMore a,.row-action,.check-row{position:relative}
+.nav-links a::before,.site-footer a::before,footer.wrapflex a::before,.hit::before,#modalMore a::before,.row-action::before,.check-row::before{content:"";position:absolute;left:0;right:0;top:50%;height:24px;transform:translateY(-50%)}
+.loc-remove{position:relative}
+.loc-remove::before{content:"";position:absolute;inset:-1px}
+.info-icon::before{content:"";position:absolute;inset:-5px}
+select{min-height:24px}
+
+/* the search recap (October 5, 2026, Part C): a quiet read-only box between the form and the results: the sentence, and a button that puts the typed values back. */
+.recap{display:flex;align-items:center;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:14px 18px}
+.recap[hidden]{display:none}
+.recap{scroll-margin-top:16px}
+.recap-text{margin:0;font-size:14px;line-height:1.6;color:var(--ink);overflow-wrap:anywhere;flex:1 1 280px}
+.recap .btn{flex:none}
+
+/* a message for screen readers only (October 5, 2026): the polite search status on the search page. The window the details dialog gets keyboard focus on is a container, not a control: no ring around the whole card. */
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.modal:focus{outline:none}
+
+/* the search form's three boxes (October 5, 2026): Company is required, then ONE of the req number or the postID / title box. "(required)" is real text in the ember red; the two other boxes sit under the heading "Then one of these"
+   in a labelled group with a visible "or" between them. On a wide window the three boxes stay in one row; on a narrow one (760 pixels and below) they stack. */
+.srch-req{text-transform:none;letter-spacing:0;font-weight:700;color:var(--ember)}
+.srch-then{font-size:13px;font-weight:700;line-height:20px;color:var(--ink);padding:8px 12px 0 12px}
+.srch-company{margin-top:28px}
+.srch-or{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:700;color:var(--muted)}
+.srch-or::before,.srch-or::after{content:"";flex:1;width:1px;min-height:10px;background:var(--line)}
+@media (max-width:999px){.srch-company{margin-top:0}.srch-group{flex:none!important}.srch-pair{flex-direction:column!important}.srch-or{flex-direction:row;padding:0 12px}.srch-or::before,.srch-or::after{width:auto;min-height:0;height:1px}}
+
+/* phone layout for the pages themselves (October 4, 2026). The pages were desktop designs: 64 pixel side padding on every section, 28 pixel padding inside every card (a card's content got about 190 of 375 pixels)
+   and every two-column layout stayed two columns. At 640 pixels and below: pages use 16 pixel sides, cards 16 pixel inside, two columns stack, side-by-side fields go one per row, tables become one card per row,
+   buttons and links are 44 pixel targets, and form text is 16 pixels (a phone browser zooms the page when a smaller field is focused). Above 640 pixels nothing here applies.
+   Classes the pages carry for this (they have no style of their own above 640): pg (page side padding), pg-top (less top and bottom space), cols (two columns that stack), grid2 and grid3 (fields and tiles, one per row),
+   wrapflex (a row that wraps), btn-row (buttons that fill the row), h-hero, h-big and h-2 (headlines), flush (a card with no padding: the tables), rtable (a table shown as cards), fill (a field that fills the row), res-head (a result card's heading row). */
+@media (max-width:640px){
+  .pg{padding-left:16px!important;padding-right:16px!important}
+  .pg-top{padding-top:28px!important;padding-bottom:36px!important}
+  .cols{flex-direction:column!important;gap:24px!important;align-items:stretch!important}
+  .cols>*{flex:none!important;width:100%!important;max-width:none!important;min-width:0}
+  .grid2,.grid3{grid-template-columns:minmax(0,1fr)!important}
+  .wrapflex{flex-wrap:wrap!important;gap:12px 20px!important}
+  .btn-row{flex-wrap:wrap}
+  .btn-row .btn{flex:1 1 100%;justify-content:center}
+  .h-hero{font-size:40px!important;line-height:1.08!important}
+  .h-big{font-size:32px!important}
+  .h-2{font-size:28px!important}
+  .card{padding:16px!important}
+  .card.flush{padding:0!important}
+  .fill{width:100%!important}
+  .res-head{flex-wrap:wrap;gap:10px}
+
+  /* controls: 44 pixel targets, 16 pixel form text */
+  main .btn,main button.btn,main a.btn{min-height:44px;justify-content:center}
+  .filter-pill{min-height:44px}
+  .row-action,a.row-action{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}
+  .rtable .row-action,.rtable a.row-action{justify-content:flex-start}
+  input[type="text"],input[type="email"],input[type="number"],input[type="password"],select,textarea{font-size:16px!important}
+  input[type="text"],input[type="email"],input[type="number"],input[type="password"],select{min-height:44px}
+  .check-row{min-height:44px}
+  .toggle{flex:none}
+  .toggle::before{content:"";position:absolute;inset:-7px 0}
+  .info-icon::before{content:"";position:absolute;inset:-15px}
+  .info-tooltip,.info-tooltip-wide{position:fixed!important;left:16px!important;right:16px!important;width:auto!important;top:auto!important;bottom:16px!important}
+  .info-tooltip::after{display:none}
+  .loc-remove{width:44px;height:44px}
+  .signin-row{flex-direction:column;align-items:stretch}
+  .signin-row>div{flex:none;width:100%}
+  .signin-row .btn{width:100%}
+  .site-footer{flex-wrap:wrap;gap:0 20px;padding:12px 16px}
+  .site-footer a{display:inline-flex;align-items:center;min-height:44px}
+  footer.wrapflex a{display:inline-flex;align-items:center;min-height:44px}
+
+  /* the details window */
+  .modal{width:calc(100vw - 24px);max-width:none;max-height:88vh;padding:20px 16px}
+  .source-row{flex-direction:column;align-items:flex-start;gap:6px;min-height:44px}
+  #modalClose,.info-box-close{min-width:44px;min-height:44px}
+  #modalMore a{display:inline-flex;align-items:center;min-height:44px;margin-right:16px}
+  .tile-comments{min-height:44px}
+  .info-box{width:calc(100vw - 24px)}
+
+  /* tables: one card per row; the table roles are in the markup, the visible label of each cell comes from its data-label (the column heading's own words) */
+  .rtable,.rtable thead,.rtable tbody,.rtable tr,.rtable th,.rtable td{display:block}
+  .rtable{width:100%}
+  .rtable thead th{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .rtable tbody tr{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .rtable tbody tr:last-child{border-bottom:0}
+  .rtable td{padding:6px 0!important;border:0!important;white-space:normal!important;width:auto!important;display:grid;grid-template-columns:104px minmax(0,1fr);gap:4px 12px;align-items:center;justify-items:start;overflow-wrap:anywhere}
+  .rtable td>div,.rtable td>.row-note{grid-column:2}
+  .rtable td[data-label="Actions"]{display:flex;flex-wrap:wrap;gap:0 14px}
+  .rtable td::before{content:attr(data-label);font-size:12px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+  .rtable td[data-label="Actions"]::before{flex:0 0 100%}
+  .rtable td:first-child{display:block;font-size:16px;padding-top:0!important}
+  .rtable td:first-child::before{display:none}
+  .rtable td .row-action{margin:0 14px 0 0}
+  #postingTable td>div{width:100%}
+  #postingTable .bar-track{width:auto!important;flex:1 1 60px;min-width:60px}
+  #postingTable td span{white-space:nowrap}
+  /* prompt BP: the Sort by box on My openings fills its row and is a 44 pixel target */
+  .sort-box{width:100%}
+  .sort-box select{flex:1 1 auto;min-width:0;min-height:44px}
+}
+@media (max-width:360px){.rtable td{grid-template-columns:92px minmax(0,1fr)}}

@@ -1,10 +1,11 @@
 // team.js - the organization's roster (admins only): who can register postings, add a person (invited until their first sign-in), make or unmake an admin, remove a person (naming who takes over
 // their postings when they own any). Every rule is enforced by the backend; this page shows its answers in words. Nothing here trusts the page for identity: the session token tells the server who is acting.
 
-import { api, requirePoster, mountAccount, go, signOut, describeError, isAuthFailure } from "../app.js";
-import { rememberNext } from "../session.js";
-import { $, $$, h, clear, alertBox } from "../dom.js";
-import { checkAdd, successorChoices, statusText, roleText, actionsFor, mapRosterError } from "../roster-model.js";
+import { api, requirePoster, mountAccount, go, signOut, describeError, isAuthFailure } from "../app.js?v=0fdd7197";
+import { rememberNext } from "../session.js?v=3c599048";
+import { $, $$, h, clear, alertBox } from "../dom.js?v=5c78a8cd";
+import { checkAdd, successorChoices, statusText, roleText, actionsFor, mapRosterError } from "../roster-model.js?v=0e3dedd7";
+import { focusWithRing } from "../focus-ring.js?v=98307f3f";
 
 const state = { me: null, roster: [], busy: false };
 const rowsEl = $("#rows"), note = $("#actionNote"), pageAlert = $("#pageAlert"), addForm = $("#addForm"), addBtn = $("#addBtn");
@@ -30,12 +31,12 @@ function render() {
   clear(rowsEl);
   for (const p of state.roster) {
     const you = p.poster_id === state.me;
-    rowsEl.append(h("tr", {},
-      h("td", { style: "font-weight:600;" }, p.full_name, you ? h("span", { class: "row-note", style: "margin-left:8px;" }, "(you)") : null),
-      h("td", { style: "color:var(--muted);" }, p.email),
-      h("td", {}, roleText(p)),
-      h("td", {}, h("span", { class: "status " + (p.status === "active" ? "status-active" : "status-draft") }, statusText(p))),
-      h("td", { style: "white-space:nowrap;" }, actionsFor(p, state.me, state.roster).map((k) => h("button", { type: "button", class: "row-action", onclick: () => act(k, p) }, k === "remove" ? "Remove" : k === "promote" ? "Make admin" : "Remove admin")))));
+    rowsEl.append(h("tr", { role: "row" },
+      h("td", { role: "cell", "data-label": "Name", style: "font-weight:600;" }, p.full_name, you ? h("span", { class: "row-note", style: "margin-left:8px;" }, "(you)") : null),
+      h("td", { role: "cell", "data-label": "Work email", style: "color:var(--muted);" }, p.email),
+      h("td", { role: "cell", "data-label": "Role" }, roleText(p)),
+      h("td", { role: "cell", "data-label": "Status" }, h("span", { class: "status " + (p.status === "active" ? "status-active" : "status-draft") }, statusText(p))),
+      h("td", { role: "cell", "data-label": "Actions", style: "white-space:nowrap;" }, actionsFor(p, state.me, state.roster).map((k) => h("button", { type: "button", class: "row-action", onclick: () => act(k, p) }, k === "remove" ? "Remove" : k === "promote" ? "Make admin" : "Remove admin")))));
   }
   const t = $("#tableNote"); t.hidden = state.roster.length > 0; if (state.roster.length === 0) { clear(t); t.append("Nobody is on the roster."); }
 }
@@ -58,7 +59,7 @@ function openDialog({ title, content, confirmLabel, onSubmit }) {
     if (r && r.error) { errBox.hidden = false; errBox.textContent = r.error; return; }
     close();
   });
-  document.body.append(backdrop); document.addEventListener("keydown", onKey); confirm.focus();
+  document.body.append(backdrop); document.addEventListener("keydown", onKey); focusWithRing(confirm);   // prompt BK: the ring shows at once
 }
 const para = (text) => h("p", { style: "font-size:14px;line-height:1.6;color:var(--muted);margin:0 0 12px 0;" }, text);
 
@@ -72,15 +73,15 @@ function act(kind, p) {
   const who = "“" + p.full_name + "”";
   if (kind === "promote") return openDialog({ title: "Make this person an admin?", confirmLabel: "Make admin", content: [para(who + " will be able to add and remove people on this roster and make other admins.")],
     onSubmit: async () => finish(await api.rosterSetAdmin(p.poster_id, true), who + " is now an admin.") });
-  if (kind === "demote") return openDialog({ title: "Remove admin rights?", confirmLabel: "Remove admin", content: [para(who + " keeps their postings and their access; they can no longer manage this roster.")],
+  if (kind === "demote") return openDialog({ title: "Remove admin rights?", confirmLabel: "Remove admin", content: [para(who + " keeps their openings and their access; they can no longer manage this roster.")],
     onSubmit: async () => finish(await api.rosterSetAdmin(p.poster_id, false), who + " is no longer an admin.") });
   if (kind === "remove") {
     const others = successorChoices(state.roster, p.poster_id);
-    const sel = h("select", { id: "successor", style: "width:100%;" }, h("option", { value: "" }, "Nobody (only possible when they own no postings)"), others.map((o) => h("option", { value: o.poster_id }, o.full_name + " (" + o.email + ")")));
+    const sel = h("select", { id: "successor", style: "width:100%;" }, h("option", { value: "" }, "Nobody (only possible when they own no openings)"), others.map((o) => h("option", { value: o.poster_id }, o.full_name + " (" + o.email + ")")));
     return openDialog({ title: "Remove this person?", confirmLabel: "Remove",
-      content: [para(who + " loses access immediately; a sign-in link they already hold stops working. If they own postings, choose who takes those over: the postings stay live under the new owner."),
-        h("label", { for: "successor", style: "display:block;margin-top:12px;" }, "Their postings go to"), sel],
-      onSubmit: async () => finish(await api.rosterRemove(p.poster_id, sel.value || null), (d) => who + " was removed" + (d && d.transferred ? " and " + d.transferred + (d.transferred === 1 ? " posting was" : " postings were") + " handed over." : ".")) });
+      content: [para(who + " loses access immediately; a sign-in link they already hold stops working. If they own openings, choose who takes those over: the openings stay live under the new owner."),
+        h("label", { for: "successor", style: "display:block;margin-top:12px;" }, "Their openings go to"), sel],
+      onSubmit: async () => finish(await api.rosterRemove(p.poster_id, sel.value || null), (d) => who + " was removed" + (d && d.transferred ? " and " + d.transferred + (d.transferred === 1 ? " opening was" : " openings were") + " handed over." : ".")) });
   }
 }
 

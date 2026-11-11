@@ -3,10 +3,13 @@
 // Facts fixed by the backend: the tier is always "standard" in this build (live on registration; the window is the poster's choice from 14 to 45 days, 45 when left alone; the extended tier is not
 // offered); both AI disclosures are REQUIRED and are always sent as true or false (never omitted, never null); the acting employer and organization are never sent (the server reads them from the session).
 
-import { problems as locationProblems } from "./location-rules.js";
-import { checkGoLive } from "./schedule-form.js";
-import { checkLinks, checkFirms } from "./edit-form.js";
-import { aiNoteProblem } from "./ai-notes.js";
+import { problems as locationProblems } from "./location-rules.js?v=d6656595";
+import { PLACE_FIELD, collapsePlaceText, placeTextProblem } from "./place-text.js?v=cb5d7506";
+import { checkGoLive } from "./schedule-form.js?v=b2985372";
+import { checkLinks, checkFirms } from "./edit-form.js?v=eb936068";
+import { aiNoteProblem } from "./ai-notes.js?v=35c5dc92";
+import { intentProblem, intentFields, INTENT_FIELD_IDS } from "./intent-statement.js?v=d37f2b4b";
+import { checkPolicyUrl, policySavedText, mapPolicyError, isPolicy } from "./policy-link.js?v=5b8f0605";
 
 // The recruiter-firm rows (pass C) are OPTIONAL too, and only matter while the "third-party recruiter involved" toggle is on: blank rows mean "no firms named".
 export function collectFirms(rows, recruiterOn) {
@@ -16,7 +19,7 @@ export function collectFirms(rows, recruiterOn) {
   return Object.assign({ used: true }, checkFirms(list));
 }
 export function firmsOutcome(saved, problem) {
-  if (problem) return { kind: "error", text: (problem.general || "The recruiter firms were not accepted.") + " The posting itself is saved" + (problem.planRequired || problem.recruiterOff ? "" : "; see the messages under the firms") + ". You can name them from My postings (Edit)." };
+  if (problem) return { kind: "error", text: (problem.general || "The recruiter firms were not accepted.") + " The opening itself is saved" + (problem.planRequired || problem.recruiterOff ? "" : "; see the messages under the firms") + ". You can name them from My openings (Edit)." };
   if (saved === null || saved === undefined) return null;
   return { kind: "ok", text: saved === 1 ? "1 recruiter firm is named on it." : saved + " recruiter firms are named on it." };
 }
@@ -33,7 +36,7 @@ export function collectLinks(rows) {
 // What the result panel says about the links once the posting itself exists. saved: how many are stored (null when none were sent); problem: the mapped refusal (mapLinksErrors), or null;
 // warning: what the liveness check found (checkWarnings), or null
 export function linksOutcome(saved, problem, warning) {
-  if (problem) return { kind: "error", text: (problem.general || "The destination links were not accepted.") + " The posting itself is saved" + (problem.planRequired ? "" : "; see the messages under the addresses") + ". You can add links from My postings (Edit)." };
+  if (problem) return { kind: "error", text: (problem.general || "The destination links were not accepted.") + " The opening itself is saved" + (problem.planRequired ? "" : "; see the messages under the addresses") + ". You can add links from My openings (Edit)." };
   if (saved === null || saved === undefined) return null;
   const text = saved === 1 ? "1 destination link is stored with it." : saved + " destination links are stored with it.";
   return warning ? { kind: "notice", text: text + " " + warning } : { kind: "ok", text };
@@ -44,8 +47,10 @@ export const MIN_WINDOW_DAYS = 14, MAX_WINDOW_DAYS = 45;      // the standard-ti
 
 // The form's input ids -> the backend's field names (for showing a server refusal under the right input)
 export const FIELD_OF_SERVER_NAME = {
+  [PLACE_FIELD]: "loctext",      // prompt BH: the typed place
   title: "jtitle", req_number: "req", location_ids: "locpicker", locations: "locpicker", is_remote: "locpicker", locations_attested: "attest", applicant_cap: "appcap",
   initial_closeout_condition: "closeout", description_text: "desc", window_days: "livedays", duplicate_explanation: "dupnote", ai_filtering_note: "aiFilterNote", ai_interview_note: "aiInterviewNote",
+  ...INTENT_FIELD_IDS,      // prompt ST1: the kind of opening (intentSelect) and its date (intentDate)
 };
 export const MAX_DUP_NOTE = 300;      // create-posting refuses a longer explanation
 
@@ -57,7 +62,7 @@ export function validateForm(v) {
   const e = {};
   const need = (id, text, what) => { if (String(text || "").trim() === "") e[id] = "Enter " + what + "."; };
   need("jtitle", v.title, "the job title");
-  need("closeout", v.closeout, "what ends this posting");
+  need("closeout", v.closeout, "what ends this opening");
   need("req", v.req, "your req number");
   need("desc", v.desc, "the job description");
   if (v.dupAsked === true) {
@@ -76,8 +81,10 @@ export function validateForm(v) {
   // the AI notes (pass D) count only while their toggle is on; a blank note is no note
   if (v.aiFilter === true) { const p = aiNoteProblem(String(v.aiFilterNote == null ? "" : v.aiFilterNote).trim()); if (p) e.aiFilterNote = p; }
   if (v.aiInterview === true) { const p = aiNoteProblem(String(v.aiInterviewNote == null ? "" : v.aiInterviewNote).trim()); if (p) e.aiInterviewNote = p; }
+  { const p = intentProblem(v.intent, v.intentDate); if (p) e.intentDate = p; }      // prompt ST1: the kind of opening is optional; a value that takes a date needs a real one
   const chosen = Array.isArray(v.locEntries) ? v.locEntries : [];
-  if (v.remote !== true && chosen.length === 0) e.locpicker = "Choose a location from the list, or tick Remote role.";
+  if (v.outside === true) { const p = placeTextProblem(collapsePlaceText(v.locText)); if (p) e.loctext = p; }      // prompt BH: a place outside the US list, typed
+  else if (v.remote !== true && chosen.length === 0) e.locpicker = "Choose a location from the list, or tick Remote role.";
   else Object.assign(e, locationProblems(chosen, v.remote === true, v.attested === true));
   return e;
 }
@@ -100,8 +107,12 @@ export function buildCreateBody(v) {
   const fNote = String(v.aiFilterNote == null ? "" : v.aiFilterNote).trim(), iNote = String(v.aiInterviewNote == null ? "" : v.aiInterviewNote).trim();
   if (v.aiFilter === true && fNote !== "") body.ai_filtering_note = fNote;                  // the employer's words travel only with a toggle that is on (the backend refuses them otherwise)
   if (v.aiInterview === true && iNote !== "") body.ai_interview_note = iNote;
-  if (chosen.length) body.location_ids = chosen.map((c) => c.id);
-  if (chosen.length >= 2) body.locations_attested = v.attested === true;
+  Object.assign(body, intentFields(v.intent, v.intentDate));      // prompt ST1: nothing at all when not stated
+  if (v.outside === true) body[PLACE_FIELD] = collapsePlaceText(v.locText);      // prompt BH: a typed place; no list place goes with it
+  else {
+    if (chosen.length) body.location_ids = chosen.map((c) => c.id);
+    if (chosen.length >= 2) body.locations_attested = v.attested === true;
+  }
   if (String(v.appcap || "").trim() !== "") body.applicant_cap = Number(String(v.appcap).trim());
   const w = String(v.win == null ? "" : v.win).trim();
   if (w !== "") body.window_days = Number(w);          // omitted means 45 (the backend's default); a value outside 14-45 is refused by the backend, whatever this page checked
@@ -118,4 +129,51 @@ export function mapServerErrors(err) {
   }
   if (!list.length && err && err.message) general = err.message;
   return { byField, general };
+}
+
+// ---- prompt BJ (October 11, 2026): the AI and hiring policy link on the register page, the address checks, and what is told about them in ONE place
+// The policy address is OPTIONAL: nothing typed means no link. -> { used, ok, url?, error? } (the same rule as the edit page's box: js/policy-link.js checkPolicyUrl)
+export function collectPolicy(text) {
+  const t = String(text == null ? "" : text).trim();
+  if (t === "") return { used: false, ok: true };
+  const c = checkPolicyUrl(t);
+  return c.ok ? { used: true, ok: true, url: c.url } : { used: true, ok: false, error: c.error };
+}
+// what the result card says about the policy link once the opening exists. saved: the answer of set-destination-links ({ changed, links }) or null when none was sent; problem: mapPolicyError's answer or null
+export function policyOutcome(saved, problem) {
+  if (problem) return { kind: "error", text: (problem.general || "The AI and hiring policy link was not accepted.") + " The opening itself is saved. You can add the link from My openings (Edit)." };
+  if (saved === null || saved === undefined) return null;
+  const l = Array.isArray(saved.links) ? saved.links.find(isPolicy) : null;
+  return { kind: !l || l.check_status === "ok" ? "ok" : "notice", text: policySavedText(saved, false) };
+}
+export { mapPolicyError };
+
+// Everything that is wrong with the three link sections BEFORE anything is saved, as one list (never one section at a time).
+//   links / firms: the collect results (collectLinks / collectFirms); policy: collectPolicy's
+//   (prompt BK: a firm typed while the recruiter switch is off can no longer be there: turning the switch off clears the typed firm rows, so that block of prompt BJ is gone)
+// -> { ok, items: [sentence], text } ; text is one plain sentence naming every section that needs fixing
+export function linkProblems({ links, firms, policy }) {
+  const items = [];
+  const rowErrors = (kind, collected, keys) => {
+    if (!collected || collected.ok) return;
+    for (const [row, e] of Object.entries(collected.errors || {})) for (const k of keys) if (e[k]) items.push(kind + " " + (Number(row) + 1) + " (" + e[k].replace(/[.]$/, "") + ")");
+    if (collected.form && Object.keys(collected.errors || {}).length === 0) items.push(kind + "s (" + collected.form.replace(/[.]$/, "") + ")");
+  };
+  rowErrors("destination link", links, ["url", "label"]);
+  rowErrors("recruiter firm", firms, ["name", "url"]);
+  if (policy && policy.used && !policy.ok) items.push("the AI and hiring policy link (" + String(policy.error || "not valid").replace(/[.]$/, "") + ")");
+  return { ok: items.length === 0, items, text: items.length ? "Nothing was saved. Please fix: " + items.join("; ") + "." : "" };
+}
+
+// What the check taken at save found, in one sentence for every destination link and recruiter firm that did not answer (advisory: they are saved anyway). Each argument is the "links" list of that save's answer
+// ([{ position, kind, firm?, check_status, check_http }]) or null when that kind was not sent. -> { kind: "notice", text } or null when every address answered
+// The AI and hiring policy link is NOT in this sentence (prompt BK): "It is saved anyway" is true of a destination link, but a policy link whose check did not answer is not shown to candidates, so it has its own
+// words, the editor's (js/policy-link.js policySavedText, through policyOutcome above).
+export function checkReport({ links, firms }) {
+  const one = (l) => (Number.isInteger(l.check_http) ? " answered HTTP " + l.check_http : " could not be reached");
+  const items = [];
+  for (const l of (Array.isArray(links) ? links : [])) if (l && l.check_status === "failed" && l.kind !== "recruiter" && l.kind !== "policy") items.push("destination link " + l.position + one(l));
+  for (const l of (Array.isArray(firms) ? firms : [])) if (l && l.kind === "recruiter" && l.check_status === "failed") items.push("recruiter firm " + (typeof l.firm === "string" && l.firm !== "" ? l.firm : l.position) + one(l));
+  if (!items.length) return null;
+  return { kind: "notice", text: "When we checked, " + items.join("; ") + ". " + (items.length === 1 ? "It is saved anyway. Make sure it is right." : "They are saved anyway. Make sure they are right.") };
 }

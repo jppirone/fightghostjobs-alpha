@@ -1,19 +1,69 @@
-// search.js - a verified candidate looks up a posting: company + (title, postID or req number). No browsing, ever: the backend refuses anything else.
+// search.js - a verified candidate looks up ONE posting they already know about: company + (req number, postID or part of the title). No browsing, ever: the backend refuses anything else.
 // Flow: [sign in once by email] -> search -> result cards -> "View posting details" (records the view, lists the employer's destinations) -> a destination click (issues a 2-minute single-use link, opened in a new tab).
 
-import { api, mountAccount, go, signOut, describeError, isAuthFailure } from "../app.js";
-import { requestLink } from "../session.js";
-import { $, h, clear, alertBox, chip, safeHref } from "../dom.js";
-import { locationLine, waitText } from "../format.js";
-import { postingChips, notOpenMessage } from "../chips.js";
-import { aiNotes } from "../ai-notes.js";
-import { checkCompany, resolveSearch, noMatchMessage } from "../search-input.js";
+import { api, mountAccount, go, signOut, describeError, isAuthFailure, clearLandingNote } from "../app.js?v=0fdd7197";
+import { requestLink, currentSession, watchOtherTabSignIn, confirmEmailCode } from "../session.js?v=3c599048";
+import { CODE_ENABLED, mountCodeEntry } from "../code-entry.js?v=e91c88ce";
+import { savePending, takePending } from "../signin-handoff.js?v=2f9c4abe";
+import { limitSource } from "../source-clean.js?v=228d1fb3";
+import { applyFragmentPrefill } from "../fragment-prefill.js?v=cf445fdb";
+import { requestOrigin } from "../fragment-prefill.js?v=cf445fdb";
+import { roleNoteKind, BOTH_ROLES_TEXT } from "../landing-notice.js?v=f37507d8";
+import { lockScroll } from "../scroll-lock.js?v=b751eb4c";
+import { trapFocus } from "../dialog-focus.js?v=f788366d";
+import { makeAnnouncer } from "../search-status.js?v=7497036c";
+import { recapSentence } from "../search-recap.js?v=bd8e2e91";
+import { $, h, clear, alertBox, chip, safeHref } from "../dom.js?v=5c78a8cd";
+import { waitText } from "../format.js?v=a032fa17";
+import { postingChips, notOpenMessage } from "../chips.js?v=fe680160";
+import { intentNotes } from "../intent-statement.js?v=d37f2b4b";
+import { infoBoxIcon, openInfoBox } from "../info-box.js?v=2f309155";
+import { ABOUT_TITLE, ABOUT_TEXT, ABOUT_ICON_LABEL, LINKS_ABOUT_TITLE, LINKS_ABOUT_BEFORE, LINKS_ABOUT_BOLD, LINKS_ABOUT_AFTER, LINKS_ICON_LABEL, LINKS_HEADING } from "../about-text.js?v=ce89cdee";
+import { tileActions } from "../tile-actions.js?v=7180edbf";
+import { candidatePolicyLine, applicationLinks, POLICY_LINE_LABEL } from "../policy-link.js?v=5b8f0605";
+import { COMMENTS_VISIBLE } from "../config.js?v=6c180ba3";
+import { openUnit } from "../open-link.js?v=19175677";
+import { infoPanelIcon } from "../info-panel.js?v=9aaf2c67";
+import { checkCompany, resolveSearch, noMatchParts, MISS_LINE_SPLIT, missEmptyLines, missMessage, failoverSentence, searchErrorMessage, searchErrorFocus, KIO_INVALID_MESSAGE, KIO_GONE_MESSAGE, KIO_NOT_REGISTERED_MESSAGE, kioMismatchMessage } from "../search-input.js?v=01d37c50";
+import { isRegistered } from "../registered.js?v=f191c8c2";
+import { refineHints } from "../refine-hint.js?v=ac9c49cb";
+import { placeNodes } from "../place.js?v=731e50e0";
+import { wantsStaffScope, STAFF_BANNER, STAFF_TITLE_NOTE, staffChips, staffIdLine, staffStatusLabel, staffCountText } from "../staff-scope.js?v=7780df57";
 
-const PENDING_KEY = "fgj-pending-search";
-const form = $("#searchForm"), companyIn = $("#company"), queryIn = $("#titleq"), reqIn = $("#reqq"), reqToggle = $("#reqToggle"), searchBtn = $("#searchBtn"), formError = $("#formError");
+const form = $("#searchForm"), companyIn = $("#company"), queryIn = $("#titleq"), reqIn = $("#reqq"), sourceIn = $("#sourceq"), sourceBlock = $("#sourceBlock"), reqToggle = $("#reqToggle"), searchBtn = $("#searchBtn"), formError = $("#formError");
 const resultsEl = $("#results"), countEl = $("#resultCount");
-const backdrop = $("#modalBackdrop");
+const recapEl = $("#recap"), recapTextEl = $("#recapText"), recapEditBtn = $("#recapEdit");
+const noticeEl = $("#searchNotice");   // prompt FK (October 29, 2026): the sentence about the record of a search. Prompt JB (November 7, 2026): it no longer sits under the results; it stays hidden in search.html and the info box shows it (data-off="1" in the staff view, where no record is kept)
+$("#infoSlot").append(infoPanelIcon()); $("#recapInfoSlot").append(infoPanelIcon());   // prompt JB: one "i" at the heading and the same box from the recap box
+let lastSearch = null;   // what was typed in the three boxes for the search that just ran: in memory only, never stored; "Edit this search" puts it back
+const backdrop = $("#modalBackdrop"), status = makeAnnouncer($("#searchStatus"), window);
 let session = null, busy = false, cooldownTimer = null;
+// the staff scope (js/staff-scope.js): scope=all in the address only ASKS the database whether this signed-in person is staff; nothing on the page changes unless the database says yes
+const STAFF_REQUESTED = wantsStaffScope(location.search);
+let staffMode = false, staffRobotsBefore = null, staffRobotsAdded = false, staffTitleNoteBefore = null;
+
+// opened with the company and ONE other value in the URL fragment (the browser extension does this): the boxes are filled, the fragment is taken out of the address bar at once, and the person presses Search. Never an automatic search,
+// and a search saved before the sign-in link is dropped so it can not run over what was filled in (js/fragment-prefill.js has the rules for this untrusted input)
+// prompt BQ: a fragment with a KIO ID (#k=...&c=...&t=...) puts the ID in the one box and, when it was sent, the company in the company box. The title words (t) are NOT put in a box: they are kept here, in memory only, so that the answer can say
+// whether the job ad's title differs from the record. They are used only for a search of that same ID, and dropped when the ID is changed.
+// prompt HM (October 31, 2026): a fragment whose k is not a KIO ID that passes the check keeps its company and title (the module only does that when it has BOTH): the typed key text is put in the one box as typed and held here with the title
+// (bad: true), and the search sends it as a failed key with the company and title, so the answer is the company and title results with the failover sentence. heldOrigin: where the search came from (o=e, the extension, with the cleaned
+// host of the job page; o=m, the phone entry, with no host); in memory only, used by the NEXT search only, after which every search is the site's own. While a signed out person waits for the emailed link it is also saved with the search (prompt IA).
+let heldKio = null;   // { stored, title, shown, bad } | null
+let heldOrigin = null;   // { origin, host } | null
+// prompt IB (November 3, 2026): an address with the key x is the phone entry (the Shortcut: search.html#x=<the text read out of a screenshot>). Its whole fragment is handled by js/phone-entry.js, loaded only then (again when the fragment changes
+// on this page); the classic prefill below is skipped for it, and a search saved before a sign-in link is dropped so it cannot run over what is read. Without an x nothing below changes.
+const PHONE_X = /^#(?:[^#]*&)?x=/;
+const runPhone = () => import("../phone-entry.js?v=ee9ecdf0").then((m) => m.runPhoneEntry({ win: window, doc: document, companyEl: companyIn, queryEl: queryIn, reqEl: reqIn, sourceEl: sourceIn, onOrigin: (o) => { heldOrigin = o || null; } })).catch(() => { /* the page stays the ordinary search page */ });
+window.addEventListener("hashchange", () => { if (PHONE_X.test(location.hash)) { takePending(localStorage); runPhone(); } });
+if (PHONE_X.test(location.hash)) { takePending(localStorage); runPhone(); }
+else if (applyFragmentPrefill({ win: window, companyEl: companyIn, queryEl: queryIn, reqEl: reqIn, onKio: (k) => { heldKio = k.title || k.bad ? { stored: k.stored, title: k.title, shown: k.shown, bad: k.bad === true } : null; }, onOrigin: (o) => { heldOrigin = o || null; } })) takePending(localStorage);
+// the request fields origin and origin_host (candidate-search, prompt HL): "site" with no host for a search typed here, "extension" with the cleaned host for the search that arrived from the extension; they never change the answer
+// prompt IA: "mobile" (the phone entry, o=m) is sent with no host; requestOrigin (js/fragment-prefill.js) is the one place that decides the fields, and the saved search of the sign in hand-off reads its origin back through it too
+function takeOriginFields() {
+  const o = heldOrigin; heldOrigin = null;
+  return requestOrigin(o);
+}
 
 function setFormError(text) { formError.hidden = !text; formError.textContent = text || ""; }
 function startCooldown(button, seconds, idleLabel) {
@@ -27,14 +77,18 @@ function startCooldown(button, seconds, idleLabel) {
 // ---- who is here
 function showSignIn(message) {
   $("#signinWrap").hidden = false;
+  ensureWatch();
   if (message) { const b = $("#candEmailError"); b.hidden = false; b.textContent = message; }
 }
 function applySession() {
+  if (staffMode) { $("#signinWrap").hidden = true; const sn = $("#roleNotice"); clear(sn); sn.hidden = true; return; }   // a staff person searching: no sign-in card, no employer notice
   $("#signinWrap").hidden = !!(session && session.isCandidate);
   const notice = $("#roleNotice"); clear(notice); notice.hidden = true;
+  // an address that is both a candidate and an employer: the top bar shows the employer buttons; say so, and that searching works as a candidate (no sign-in rule and no header behavior changes)
+  if (roleNoteKind(session) === "both") { notice.hidden = false; notice.append(alertBox("notice", BOTH_ROLES_TEXT)); }
   if (session && session.isPoster && !session.isCandidate) {
     notice.hidden = false;
-    notice.append(alertBox("notice", "You are signed in as an employer. Candidate search needs a verified candidate session: sign out, then verify a candidate email address."),
+    notice.append(alertBox("notice", "You are signed in as an employer. Candidate search needs a candidate sign-in: sign out, then confirm a candidate email address."),
       h("div", { style: "margin-top:12px;" }, h("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: async () => { await signOut(); go("search.html"); } }, "Sign out")));
     $("#signinWrap").hidden = true;
   }
@@ -48,75 +102,283 @@ $("#signinForm").addEventListener("submit", async (ev) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320) { err.hidden = false; err.textContent = "Enter your email address."; return; }
   send.disabled = true; const label = send.textContent; send.textContent = "Sending…";
   try {
-    const r = await requestLink(email, "candidate", "search.html");
+    const r = await requestLink(email, "candidate", STAFF_REQUESTED ? "search.html?scope=all" : "search.html");   // the staff view's parameter is kept on this device with the landing page, never put in the emailed link
     if (!r.ok) { err.hidden = false; err.textContent = r.status === 429 || /rate|seconds|after/i.test(r.message) ? "A link was just sent to this address, or too many were requested. Wait a minute and try again." : "We could not send the email. Please try again in a moment."; return; }
     $("#signinForm").hidden = true;
     const sent = $("#candSent"); sent.hidden = false; clear(sent);
-    sent.append(alertBox("ok", "Check your email. The link takes you straight back here; your search will be waiting."));
+    sent.append(alertBox("ok", "Check your email. Open the link in this same browser and your search will be waiting. If it opens in another browser or app, enter your search again there."));
+    // the same email carries a short code: typed here it finishes the sign-in in THIS tab and the saved search runs (js/code-entry.js)
+    if (CODE_ENABLED) { const host = $("#candCode"); clear(host); host.hidden = false; mountCodeEntry({ host, email, confirm: confirmEmailCode, hint: "No need to open the link. The code is 6 digits and works once.", onDone: codeDone, onStartOver: () => { clear(host); host.hidden = true; clear(sent); sent.hidden = true; $("#signinForm").hidden = false; $("#candEmail").focus(); } }); }
   } finally { send.disabled = false; send.textContent = label; }
 });
 
+// the place of an opening: ONE rule for every screen (js/place.js placeNodes): the typed place with its small note, otherwise the list places and Remote, otherwise "Location not stated"
+const placeNodesOf = (row) => placeNodes(h, row);
+
+// the ID a candidate sees on a card and in the details window: the whole KIO ID when the answer carries it (the employer's req number stays masked), else the masked last four of an answer from before the database change
+const openingIdText = (row) => (typeof row.kio_id === "string" && row.kio_id !== "" ? row.kio_id : row.masked_code);
+
+// ---- the small boxes behind the "i" icons (prompt LM): the two explanation paragraphs that used to sit in the details window, word for word (js/about-text.js)
+const aboutIcon = () => infoBoxIcon({ label: ABOUT_ICON_LABEL, title: ABOUT_TITLE, body: () => [ABOUT_TEXT] });
+const linksAboutIcon = () => infoBoxIcon({ label: LINKS_ICON_LABEL, title: LINKS_ABOUT_TITLE, body: () => [h("p", { style: "margin:0;" }, LINKS_ABOUT_BEFORE, h("strong", {}, LINKS_ABOUT_BOLD), LINKS_ABOUT_AFTER)] });
+// the Registered mark (only for an opening the DATABASE says is registered: an active paid plan, or a pilot plan with an expiry date; one plain true in the row, nothing else about the plan, js/registered.js) and the "i" beside it.
+// An opening that is not Registered has no mark; its "i" stays, so the paragraph is still one tap away.
+const registeredMark = (row) => (isRegistered(row) ? h("div", { class: "pill badge-verified", style: "flex-shrink:0;" }, "✓ Registered") : null);
+
+// a pill spec -> the pill: an AI pill with the employer's words becomes a button that opens them in a box (as plain text); the AI hiring policy pill creates its one-time link only when pressed
+function pillOf(spec, row) {
+  if (spec.note) return chip(Object.assign({}, spec, { press: (btn) => openInfoBox({ title: spec.note.title, nodes: [spec.note.text], opener: btn }) }));
+  if (spec.policy) return chip(Object.assign({}, spec, { press: (btn) => openPolicy(row, btn) }));
+  return chip(spec);
+}
+
 // ---- search
 function renderCard(row) {
-  const chips = postingChips(row).map(chip);
+  const chips = postingChips(row, undefined, { tile: true }).map((spec) => pillOf(spec, row));
+  const act = tileActions(row, COMMENTS_VISIBLE);
+  // the buttons: "View opening details" as it always was (no counts in the row), or "View links" with a small "Comments (n)" link, or only "Comments (n)" in the main slot (js/tile-actions.js)
+  const buttons = act.mode === "legacy" ? [h("button", { type: "button", class: "btn btn-outline view-details", style: "flex:1;justify-content:center;", onclick: (ev) => openDetails(row, ev.currentTarget) }, act.main)]
+    : act.mode === "links" ? [h("button", { type: "button", class: "btn btn-outline view-details", style: "flex:1;justify-content:center;", onclick: (ev) => openDetails(row, ev.currentTarget) }, act.main),
+      act.comments ? h("a", { class: "tile-comments", href: act.comments.href }, act.comments.text) : null]
+    : act.comments ? [h("a", { class: "btn btn-outline tile-comments-main", href: act.comments.href, style: "flex:1;justify-content:center;" }, act.comments.text)] : [];
   return h("div", { class: "card", "data-ref": row.posting_ref },
-    h("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;" },
+    h("div", { class: "res-head", style: "display:flex;justify-content:space-between;align-items:flex-start;" },
       h("div", {},
         h("div", { style: "font-size:12px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;" }, row.company_name),
         h("div", { style: "font-size:22px;font-weight:700;margin-top:4px;" }, row.title),
-        h("div", { style: "font-size:14px;color:var(--muted);margin-top:2px;" }, locationLine(row.is_remote, row.locations) + " · postID " + row.masked_code + (row.masked_req ? " · Req " + row.masked_req : ""))),
-      h("div", { class: "pill badge-verified", style: "flex-shrink:0;" }, "✓ Registered")),
+        h("div", { style: "font-size:14px;color:var(--muted);margin-top:2px;" }, placeNodesOf(row), " · KIO ID: " + openingIdText(row) + (row.masked_req ? " · Req " + row.masked_req : ""))),
+      h("div", { class: "reg-holder" }, registeredMark(row), aboutIcon())),
     h("div", { style: "display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;" }, chips),
-    // the employer's own words about their AI use (pass D): shown verbatim, plainly attributed, only under a toggle that is on
-    ...aiNotes(row).map((n) => h("div", { class: "ai-note", style: "margin-top:12px;padding:10px 14px;border-left:3px solid var(--line);font-size:14px;line-height:1.55;color:#4A453F;overflow-wrap:anywhere;" }, h("span", { style: "font-weight:600;color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;" }, n.label), n.text)),
-    h("div", { style: "margin-top:22px;border-top:1px solid var(--line);padding-top:20px;display:flex;gap:12px;align-items:center;" },
-      h("button", { type: "button", class: "btn btn-outline view-details", style: "flex:1;justify-content:center;", onclick: (ev) => openDetails(row, ev.currentTarget) }, "View posting details")));
+    // the employer's own words about their AI use (pass D) are now behind their pill (above); prompt ST1: the employer's optional statement of the kind of the opening ("The employer says: ..."), plainly attributed; nothing at all when not stated
+    ...intentNotes(row).map((n) => h("div", { class: "ai-note intent-note", style: "margin-top:12px;padding:10px 14px;border-left:3px solid var(--line);font-size:14px;line-height:1.55;color:#4A453F;overflow-wrap:anywhere;" }, h("span", { style: "font-weight:600;color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;" }, n.label), n.text)),
+    buttons.length ? h("div", { class: "tile-actions", style: "margin-top:22px;border-top:1px solid var(--line);padding-top:20px;display:flex;gap:12px;align-items:center;" }, ...buttons) : null);
+}
+
+// the AI hiring policy pill: the one-time link is made NOW, because the person asked for it, never when the results load. It is the same request the link rows of the details window make (candidate-link-issue); the answer
+// holds one entry per kind and the policy entry is opened in a new tab, the same way a link row opens one.
+async function openPolicy(row, button) {
+  if (button.disabled) return;
+  const text = button.firstChild, original = text.textContent;
+  button.disabled = true; text.textContent = "Opening…";
+  try {
+    const r = await api.candidateLinkIssue(row.posting_ref);
+    const found = r.ok ? r.data.links.find((x) => x.kind === "policy") : null;
+    if (!found) { text.textContent = r.ok ? "Unavailable" : r.error.code === "rate_limited" ? "Try again in " + waitText(r.error.retryAfter || 30) : r.status === 409 ? "Not open" : "Try again"; return; }
+    const url = safeHref(found.go_url);
+    const w = url ? window.open(url, "_blank", "noopener,noreferrer") : null;
+    if (w === null && url) {
+      // the browser held back the new tab: a real link the person can press themselves (it stays valid for 2 minutes)
+      button.replaceWith(h("a", { class: "chip chip-button", href: url, target: "_blank", rel: "noopener noreferrer", style: "text-decoration:none;" }, original, h("span", { class: "sr-only" }, " (opens in a new tab)")));
+      return;
+    }
+    text.textContent = "Opened ✓";
+  } finally {
+    setTimeout(() => { if (button.isConnected) { button.disabled = false; text.textContent = original; } }, 4000);
+  }
 }
 
 function showResults(data, searched) {
   clear(resultsEl);
   countEl.hidden = false;
   const n = data.results.length;
+  // prompt HM: the key failed and the company and title were searched: one plain sentence above everything else (text only; the company and the title are what the person typed). It is read out with the rest of the search's one message.
+  if (searched.failoverText) resultsEl.append(h("div", { class: "alert alert-notice", id: "failoverNotice", style: "overflow-wrap:anywhere;" }, searched.failoverText));
   if (n === 0) {
-    countEl.textContent = "No matching postings";
-    resultsEl.append(h("div", { class: "empty-note", style: "margin-top:0;" }, noMatchMessage(searched.company, searched.query, searched.kind)));
+    countEl.textContent = "No matching openings";
+    // prompt BQ: an ID that is past its retention says so in its own words; every other empty answer is the page's usual note
+    // prompt JB (November 7, 2026): the note shows its first sentence(s); the rest of it is in the info box (js/info-panel.js)
+    const emptyNote = h("div", { class: "empty-note", id: "emptyNote", style: "margin-top:0;" }, searched.gone === true ? KIO_GONE_MESSAGE : noMatchParts(searched.company, searched.query, searched.kind).visible);
+    // prompt HD: a company based search that found nothing and carries one of the three miss kinds says which miss it was, in place of the general note (the echo of what was searched stays; each line on its own line); any other value changes nothing
+    const missLines = searched.gone === true ? null : missEmptyLines(searched.company, searched.query, searched.kind, searched.missKind);
+    if (missLines) { clear(emptyNote); missLines.forEach((t, i) => emptyNote.append(h("p", { class: "miss-line", style: "margin:" + (i ? "8px" : "0") + " 0 0;" }, MISS_LINE_SPLIT(t).visible))); }
+    resultsEl.append(emptyNote);
     return;
   }
-  countEl.textContent = n + (n === 1 ? " matching posting" : " matching postings") + (data.truncated ? " — showing the first 25; add more of the title to narrow it" : "");
+  countEl.textContent = n + (n === 1 ? " matching opening" : " matching openings") + (data.truncated ? ": showing the first 25; add more of the title to narrow it" : "");
+  // prompt BQ: the ID is registered, but not to the company or title the job ad showed: said above the opening, which is still shown (the person decides). Prompt BS: it names what was entered (as text, never markup).
+  if (data.mismatch === true) resultsEl.append(h("div", { class: "alert alert-notice", id: "mismatchNotice", role: "status" }, searched.mismatchText || kioMismatchMessage(searched.company, searched.title)));
+  // the gentle refine hints (js/refine-hint.js): one or two plain lines above the results of a title search; the results below are the same whatever they say
+  const hints = refineHints({ mode: data.mode, query: searched.query, count: n, truncated: data.truncated === true });
+  if (hints.length) resultsEl.append(h("div", { class: "refine-hint", id: "refineHint" }, ...hints.map((t) => h("p", {}, t))));
   for (const row of data.results) resultsEl.append(renderCard(row));
+  return hints;
 }
 
-async function runSearch() {
+// ---- the recap (Part C): once a search has run, the boxes are emptied and this read-only sentence sits between the form and the results. The one spoken message of the search is this same sentence (js/search-status.js).
+function hideRecap() { recapEl.hidden = true; recapTextEl.textContent = ""; }
+// prompt BS (October 12, 2026): the moment a new search attempt begins, nothing of the earlier one stays on the page: its results (with the mismatch notice inside them), its count line, its recap and its spoken message.
+// Only the new outcome shows, even when the attempt is refused on the page itself and nothing is sent. Focus is not touched, and Edit this search (which does not start an attempt) keeps the old results as before.
+function clearOutcome() { clear(resultsEl); countEl.hidden = true; countEl.textContent = ""; hideRecap(); lastSearch = null; status.clear(); }
+function showRecap(typed, company, search, auto, extra) {
+  lastSearch = typed;
+  companyIn.value = ""; queryIn.value = ""; reqIn.value = ""; sourceIn.value = "";   // prompt JD: the optional source goes with the other boxes
+  const text = recapSentence(company, search);
+  recapTextEl.textContent = text; recapEl.hidden = false; noticeEl.dataset.off = staffMode ? "1" : "0";   // prompt FM: a staff search is not recorded as a candidate search, so the notice about the record stays out of the staff view (staffMode is the page's own staff flag)
+  // the one spoken message of the search: the recap sentence AND the count, in the visible count line's own words (so a search that found nothing says "No matching postings" too); prompt BQ: and the mismatch notice, when there is one
+  const spoken = text + " " + countEl.textContent + "." + (extra ? " " + extra : "");
+  status.announce(spoken);
+  // After a successful search the recap goes to the top of the window, so the recap and the first results are on screen (October 5, 2026). A scroll, never a focus move (focus stays on the Search button). Smooth; a person who prefers
+  // reduced motion gets no scroll at all. Not for a replayed search (the person did nothing, and the landing note sits above), and never for a search that failed (showRecap is only called on success).
+  if (!auto && !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) recapEl.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+recapEditBtn.addEventListener("click", () => {
+  if (lastSearch) { companyIn.value = lastSearch.company; queryIn.value = lastSearch.q; reqIn.value = lastSearch.r; sourceIn.value = lastSearch.source || ""; }
+  lastSearch = null; hideRecap(); companyIn.focus();
+});
+
+// ---- the staff scope: everything below runs ONLY when the database has said yes to is_staff(); a refusal, an error or a missing function at any step puts the page back exactly as it is for everyone
+function renderStaffCard(row) {
+  return h("div", { class: "card staff-card", "data-staff-status": row.status },
+    h("div", { class: "res-head", style: "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;" },
+      h("div", {},
+        h("div", { style: "font-size:12px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;" }, row.company_name),
+        h("div", { style: "font-size:22px;font-weight:700;margin-top:4px;" }, row.title),
+        h("div", { style: "font-size:14px;color:var(--muted);margin-top:2px;" }, placeNodesOf(row), " · " + staffIdLine(row))),
+      h("div", { style: "flex-shrink:0;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;" },
+        h("div", { class: "pill" }, staffStatusLabel(row)),
+        isRegistered(row) ? h("div", { class: "pill badge-verified" }, "✓ Registered") : null)),   // the same rule as the public view
+    h("div", { style: "display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;" }, staffChips(row).map(chip)));
+}
+// idAlone (prompt BY, October 12, 2026): the search was a KIO ID with no company; an ID nobody has says the same sentence as the normal search ("No opening is registered under that ID.")
+function showStaffResults(data, idAlone) {
+  clear(resultsEl);
+  countEl.hidden = false;
+  countEl.textContent = staffCountText(data.results.length, data.truncated);
+  if (data.results.length === 0) { resultsEl.append(h("div", { class: "empty-note", style: "margin-top:0;" }, idAlone === true ? KIO_NOT_REGISTERED_MESSAGE : "Nothing matches that company and those words in any status.")); return; }
+  for (const row of data.results) resultsEl.append(renderStaffCard(row));
+}
+function enterStaffMode() {
+  staffMode = true; sourceBlock.hidden = true;   // prompt JD: the staff search sends no source
+  const robots = document.querySelector('meta[name="robots"]');
+  staffRobotsBefore = robots ? robots.getAttribute("content") : null;
+  if (robots) robots.setAttribute("content", "noindex, nofollow");
+  else { const m = document.createElement("meta"); m.setAttribute("name", "robots"); m.setAttribute("content", "noindex, nofollow"); document.head.append(m); staffRobotsAdded = true; }
+  const banner = h("div", { id: "staffBanner", class: "alert alert-notice", role: "note", style: "margin:16px 64px 0 64px;" }, STAFF_BANNER);
+  $("#main").prepend(banner);
+  const note = $("#titleNote"); if (note) { staffTitleNoteBefore = note.textContent; note.textContent = STAFF_TITLE_NOTE; }   // the line under the boxes must not say that what is not live is hidden
+  noticeEl.dataset.off = "1";   // prompt JB: no record is kept of a staff search, so the info box leaves the sentence about the record out
+  applySession();
+}
+function leaveStaffMode() {
+  staffMode = false; sourceBlock.hidden = false; noticeEl.dataset.off = "0";
+  const banner = $("#staffBanner"); if (banner) banner.remove();
+  const note = $("#titleNote"); if (note && staffTitleNoteBefore !== null) { note.textContent = staffTitleNoteBefore; staffTitleNoteBefore = null; }
+  const robots = document.querySelector('meta[name="robots"]');
+  if (robots && staffRobotsAdded) { robots.remove(); staffRobotsAdded = false; } else if (robots && staffRobotsBefore !== null) robots.setAttribute("content", staffRobotsBefore);
+  clear(resultsEl); countEl.hidden = true; hideRecap();
+  applySession();
+}
+async function detectStaff() {
+  if (!STAFF_REQUESTED || !session || staffMode) return;
+  const r = await api.isStaff();      // only a clear true from the database counts; false, an error, a missing function: nothing happens
+  if (r.ok && r.data === true) enterStaffMode();
+}
+// returns true when the staff search answered (the page is done); false when it did not (the page is back to the normal search and the caller carries on)
+async function runStaffSearch(c, q, typed, auto) {
+  busy = true; searchBtn.disabled = true; searchBtn.textContent = "Searching…";
+  status.clear();
+  try {
+    const key = q.kind === "req" ? { p_req: q.value } : q.kind === "code" || q.kind === "kio" ? { p_code: q.value } : { p_phrase: q.value };   // prompt BQ: a KIO ID goes to the staff function as its code (the function reads both forms)
+    let r = await api.staffSearch(Object.assign({ p_company: c.value }, key));
+    if (q.alsoTryCode && r.ok && r.data.results.length === 0) r = await api.staffSearch({ p_company: c.value, p_code: q.value });
+    if (r.ok) { showStaffResults(r.data, c.value === "" && q.kind === "kio"); showRecap(typed, c.value, q, auto); return true; }
+    leaveStaffMode();
+    return false;
+  } finally {
+    busy = false; searchBtn.disabled = false; searchBtn.textContent = "Search";
+  }
+}
+// nothing staff-only stays in a page the browser keeps for Back
+window.addEventListener("pagehide", () => { if (staffMode) { clear(resultsEl); countEl.hidden = true; hideRecap(); lastSearch = null; } });
+
+async function runSearch(auto) {   // auto: the saved search replayed after the sign-in link (the person did nothing, so the landing note stays)
   if (busy) return;
-  setFormError("");
-  const c = checkCompany(companyIn.value), q = resolveSearch(queryIn.value, reqIn.value);
+  setFormError(""); hideRecap(); clearOutcome();
+  // prompt HM: the key text that came in the extension's fragment and is not a KIO ID that passes the check, still in the box as it was, with the company and the title that came with it: the search is a failed key plus company and title
+  const heldBad = !!(heldKio && heldKio.bad && heldKio.title && queryIn.value.trim() === heldKio.shown && reqIn.value.trim() === "" && String(companyIn.value || "").trim() !== "");
+  const q = heldBad ? { ok: true, kind: "kio", bad: true, value: heldKio.shown } : resolveSearch(queryIn.value, reqIn.value);
+  // prompt BQ: text that has the shape of an ID but fails the check is refused at once, whatever else is or is not filled in, with the same words as ever and without touching the search limit.
+  // prompt HM: it is also SENT (the ID text alone, signed in only) so that the answer for it is the edge function's own; what the page shows does not wait for or depend on that answer
+  if (!q.ok && q.message === KIO_INVALID_MESSAGE) {
+    if (session && session.isCandidate && !staffMode) { busy = true; try { await api.candidateSearch(Object.assign({ kio: queryIn.value.trim().slice(0, 80) }, takeOriginFields())); } catch { /* the words below are shown whatever happens */ } finally { busy = false; } }
+    setFormError(q.message); queryIn.focus(); return;
+  }
+  // prompt BQ: the ID alone is enough. A company is asked for in every other kind of search, exactly as before; with an ID that passes the check it is optional (when it is typed it is still checked and, when it differs from the
+  // record, it only raises the notice beside the answer)
+  const idAlone = q.ok && q.kind === "kio" && String(companyIn.value || "").trim() === "";   // prompt BY: also in the staff view (the staff function takes an ID with no company since staff-search-id-migration; until that is run, a refusal puts the page back to the normal search, which answers the same ID)
+  const c = idAlone ? { ok: true, value: "" } : checkCompany(companyIn.value);
   if (!c.ok) { setFormError(c.message); companyIn.focus(); return; }
-  if (!q.ok) { setFormError(q.message); (q.focus === "req" ? reqIn : queryIn).focus(); return; }
+  if (!q.ok) {
+    setFormError(q.message);
+    // prompt BK: the req number AND the title are both filled: nothing from an earlier search stays under this refusal (the list, its count, the recap, what "Edit this search" would restore, the spoken status)
+    if (q.clearResults) { clear(resultsEl); countEl.hidden = true; hideRecap(); lastSearch = null; status.clear(); }
+    (q.focus === "req" ? reqIn : queryIn).focus();
+    return;
+  }
+  if (staffMode && !q.bad && (await runStaffSearch(c, q, { company: companyIn.value, q: queryIn.value, r: reqIn.value }, auto))) return;   // staff scope: the staff answer; nothing is stored in the browser or counted for candidates (the database keeps its own private who-and-when record)
   if (!session || !session.isCandidate) {
-    try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ company: companyIn.value, q: queryIn.value, r: reqIn.value })); } catch { /* ignore */ }
+    // kept in localStorage (all tabs of this browser, one hour, removed when used, never sent anywhere): the emailed link opens in a NEW tab (signin-handoff.js)
+    savePending(localStorage, { company: companyIn.value, q: queryIn.value, r: reqIn.value, source: sourceIn.value, origin: heldOrigin ? heldOrigin.origin : "site", host: heldOrigin ? heldOrigin.host : null });   // prompt IA: the origin word and the host ride with it, nothing else new
     if (session && session.isPoster) { applySession(); return; }
-    showSignIn("Verify your email first; your search is saved and runs as soon as you are back.");
+    showSignIn("Confirm your email first. We keep your search in this browser for one hour and run it when you open the link in this browser. If the link opens somewhere else, enter your search again.");
     $("#candEmail").focus();
     return;
   }
+  const hadFocus = document.activeElement === searchBtn;   // a disabled button drops the focus: it is given back when the search is over (the screen-reader message that follows is spoken with the focus where it was)
+  const typed = { company: companyIn.value, q: queryIn.value, r: reqIn.value, source: sourceIn.value };
   busy = true; searchBtn.disabled = true; const label = "Search"; searchBtn.textContent = "Searching…";
+  status.clear();
   let cooldown = 0;
   try {
-    let r = await api.candidateSearch(q.kind === "req" ? { company: c.value, req: q.value } : q.kind === "code" ? { company: c.value, code: q.value } : { company: c.value, phrase: q.value });
-    if (q.alsoTryCode && r.ok && r.data.results.length === 0) r = await api.candidateSearch({ company: c.value, code: q.value });
-    if (!r.ok && r.status === 404 && r.error.code === "not_found") r = { ok: true, data: { mode: "code", truncated: false, results: [] } };   // a code that matches nothing is a plain "no such posting"
-    if (r.ok) { showResults(r.data, { company: c.value, query: q.value, kind: q.kind }); return; }
+    // prompt BQ: a lookup by the KIO ID sends the ID and, only when they were given, the company and (from the extension's fragment, same ID only) the title words; the answer says whether they differ from the record
+    let sentTitle = "";                      // prompt BS: the title words that really went with the ID (the notice names them)
+    const kioBody = (stored) => {
+      const b = { kio: stored };
+      if (c.value !== "") b.company = c.value;
+      if (heldKio && heldKio.stored === stored) { b.phrase = heldKio.title; sentTitle = heldKio.title; }
+      return b;
+    };
+    // prompt HM: origin (and its host) go with every search of this attempt; a failed key goes with the company and the title (the edge function then searches them: the failover)
+    const src = limitSource(sourceIn.value);   // prompt JD: what the field shows, limited; nothing is sent when it is empty
+    const ev = Object.assign(takeOriginFields(), src !== "" ? { source: src } : {});
+    const send = (b) => api.candidateSearch(Object.assign(b, ev));
+    let failTitle = "";   // prompt HM: the title words that went with a key that may fail (the failover sentence names them)
+    let r = await send(q.bad ? (failTitle = heldKio.title, { kio: q.value, company: c.value, phrase: heldKio.title })
+      : q.kind === "kio" ? kioBody(q.value) : q.kind === "req" ? (q.title ? (failTitle = q.title, { company: c.value, req: q.value, phrase: q.title }) : { company: c.value, req: q.value }) : q.kind === "code" ? { company: c.value, code: q.value } : { company: c.value, phrase: q.value });
+    if (q.alsoTryCode && r.ok && r.data.results.length === 0) r = await send(q.alsoTryKio ? kioBody(q.alsoTryKio) : { company: c.value, code: q.value });
+    // prompt HM: the edge function's failover { reason, tried_key }: only one of the four known reasons counts (anything else is no failover); it comes with a 200 (results) or a 404 (nothing found)
+    const failOf = (d) => (d && typeof d === "object" && d.failover && typeof d.failover === "object" && failoverSentence(d.failover.reason, "", "") !== null ? d.failover.reason : null);
+    const failReason = failOf(r.data);
+    if (failReason !== null && failTitle === "" && sentTitle !== "") failTitle = sentTitle;
+    const failed = failReason !== null && failTitle !== "";   // the sentence names the title that was searched; without one there is no failover to describe
+    const wasKio = !failed && (q.kind === "kio" || (!!q.alsoTryKio && r.ok && r.data.mode === "kio") || (!!q.alsoTryKio && !r.ok && r.status === 410));   // the words of an ID answer only when the text really was read as an ID
+    let gone = false;
+    if (!r.ok && r.status === 410 && r.error.code === "gone") { gone = true; r = { ok: true, data: { mode: "kio", truncated: false, results: [] } }; }   // an opening past its retention: its own words
+    if (!r.ok && r.status === 404 && r.error.code === "not_found") r = { ok: true, data: { mode: failed ? "phrase" : "code", truncated: false, results: [], miss_kind: r.data && typeof r.data === "object" ? r.data.miss_kind : undefined } };   // prompt HD: the 404 body may carry the miss kind (candidate-search, prompt HC)   // a code that matches nothing is a plain "no such posting"
+    if (!r.ok && r.status === 400 && r.error.field === "kio") { setFormError(KIO_INVALID_MESSAGE); queryIn.focus(); return; }   // prompt HM: an ID the edge refuses (for example over 60 characters): the usual words, and the boxes keep what was typed
+    if (r.ok) {
+      const mismatchText = r.data.mismatch === true ? kioMismatchMessage(c.value, sentTitle) : "";
+      const missKind = !wasKio && !gone && r.data.results.length === 0 ? r.data.miss_kind : undefined;   // prompt HD: only an EMPTY company based answer can carry a miss kind; a found result never shows one
+      const failoverText = failed ? failoverSentence(failReason, c.value, failTitle) : null;
+      const hints = showResults(r.data, { company: c.value, query: failed ? failTitle : q.value, kind: failed ? "phrase" : wasKio ? "kio" : q.kind, gone, title: sentTitle, mismatchText, missKind, failoverText });
+      const missSpoken = (missMessage(missKind) || []).join(" ");   // read out with the rest of the search's one spoken message
+      showRecap(typed, c.value, q.bad ? { kind: "code" } : q, auto, [failoverText, mismatchText, ...(hints || []), missSpoken].filter(Boolean).join(" "));
+      return;
+    }
     clear(resultsEl); countEl.hidden = true;
-    if (isAuthFailure(r.error)) { session = null; applySession(); showSignIn(r.error.code === "reverification_required" ? "Your email verification has expired. Please verify your email again." : "Please verify your email to search."); return; }
+    if (isAuthFailure(r.error)) { session = null; applySession(); showSignIn(r.error.code === "reverification_required" ? "Your email confirmation has expired. Please confirm your email again." : "Please confirm your email to search."); return; }
     if (r.error.code === "rate_limited") { cooldown = r.error.retryAfter || 30; setFormError("You are searching too fast. Try again in " + waitText(cooldown) + "."); return; }
-    if (r.status === 400 && r.error.field) { setFormError(r.error.message || "That search was not accepted."); return; }
+    // the backend refused the search itself (for example a 1 or 2 letter title that is not one of its short forms): say so calmly and put the cursor in the box that needs fixing
+    if (r.status === 400 && r.error.field) { setFormError(searchErrorMessage(r.error)); const f = searchErrorFocus(r.error); (f === "company" ? companyIn : f === "req" ? reqIn : queryIn).focus(); return; }
     setFormError(describeError(r.error));
   } finally {
     busy = false;
-    if (cooldown) startCooldown(searchBtn, cooldown, label); else { searchBtn.disabled = false; searchBtn.textContent = label; }
+    if (!auto) clearLandingNote();   // a search the person started has finished: the landing note has done its job
+    if (cooldown) startCooldown(searchBtn, cooldown, label); else { searchBtn.disabled = false; searchBtn.textContent = label; if (hadFocus && document.activeElement === document.body) searchBtn.focus(); }
   }
 }
 form.addEventListener("submit", (ev) => { ev.preventDefault(); runSearch(); });
+for (const el of [companyIn, queryIn, reqIn]) el.addEventListener("input", clearLandingNote);   // typing in a search box: the person is using the page, the landing note clears
 // show / hide the req number while typing (hidden by default, like a password)
 reqToggle.addEventListener("click", () => {
   const show = reqIn.type === "password";
@@ -125,23 +387,33 @@ reqToggle.addEventListener("click", () => {
 });
 
 // ---- the details dialog
-function openModal(row) {
+function openModal(row, opener) {
   $("#modalCompany").textContent = row.company_name;
   $("#modalTitle").textContent = row.title;
-  $("#modalRefs").textContent = "postID " + row.masked_code + (row.masked_req ? " · Req " + row.masked_req : "");
-  $("#modalIntro").textContent = "This posting was registered through FightGhostJobs by a registered poster. The dates and disclosures are the poster's own. FightGhostJobs has not confirmed that the job exists, that the poster works for the company named, or that the employer will respond.";
-  clear($("#modalLinks")); const empty = $("#modalEmpty"); empty.hidden = true; empty.textContent = ""; $("#modalLinksNote").hidden = true; $("#modalMore").hidden = true; clear($("#modalMore"));
+  $("#modalRefs").textContent = "KIO ID: " + openingIdText(row) + (row.masked_req ? " · Req " + row.masked_req : "");
+  // the place line, the same words as the result card and the comments page (prompt BJ): the list places and Remote, or the employer's own text with its small note, or "Location not stated"
+  const place = $("#modalPlace"); clear(place); place.hidden = false;
+  place.append(...placeNodesOf(row));
+  // prompt LM: the Registered mark (when the opening has it) and the "i" that holds the paragraph that used to sit in this window's body
+  const reg = $("#modalRegistered"); clear(reg); reg.append(...[registeredMark(row), aboutIcon()].filter(Boolean));
+  const head = $("#modalLinksHead"); clear(head); head.hidden = true;
+  clear($("#modalLinks")); clear($("#modalPolicy")); $("#modalPolicy").hidden = true; const empty = $("#modalEmpty"); empty.hidden = true; empty.textContent = ""; $("#modalMore").hidden = true; clear($("#modalMore"));
   backdrop.classList.add("open");
-  return { links: $("#modalLinks"), empty };
+  if (!unlockScroll) unlockScroll = lockScroll(document, window);   // the page behind does not scroll while the window is open; undone exactly in closeModal
+  // focus moves into the window, Tab stays inside it, the page behind is inert; closing returns focus to the button that opened it (js/dialog-focus.js)
+  if (!releaseFocus) releaseFocus = trapFocus({ doc: document, dialog: backdrop.querySelector(".modal"), backdrop, opener, fallback: resultsEl });
+  return { links: $("#modalLinks"), empty, head };
 }
 // the thread and the private wrong-link report live on the posting's own comments page (reached only with the posting's opaque reference; never listed anywhere)
 function moreLinks(row, count, withReport) {
-  const more = $("#modalMore"); clear(more); more.hidden = false;
+  const more = $("#modalMore"); clear(more);
   const page = "comments.html?ref=" + encodeURIComponent(row.posting_ref);
-  more.append(h("a", { href: page }, "Comments" + (Number.isInteger(count) ? " (" + count + ")" : "") + " →"));
+  if (COMMENTS_VISIBLE) more.append(h("a", { href: page }, "Comments" + (Number.isInteger(count) ? " (" + count + ")" : "") + " →"));   // the one comments switch (js/config.js)
   if (withReport) more.append(h("a", { href: page + "#report" }, "Report a wrong link →"));
+  more.hidden = more.children.length === 0;
 }
-function closeModal() { backdrop.classList.remove("open"); }
+let unlockScroll = null, releaseFocus = null;
+function closeModal() { backdrop.classList.remove("open"); if (unlockScroll) { unlockScroll(); unlockScroll = null; } if (releaseFocus) { releaseFocus(); releaseFocus = null; } }
 $("#modalClose").addEventListener("click", closeModal);
 backdrop.addEventListener("click", (ev) => { if (ev.target === backdrop) closeModal(); });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeModal(); });
@@ -151,23 +423,28 @@ async function openDetails(row, button) {
   let cooldown = 0;
   try {
     const r = await api.candidateDetail(row.posting_ref);
-    const m = openModal(row);
+    const m = openModal(row, button);
     if (r.ok) {
-      if (r.data.links.length === 0) {
+      // prompt BA: the AI and hiring policy link is one more employer link but never an application destination: it is its own line, and it never makes the opening look as if it had an apply link
+      const applyLinks = applicationLinks(r.data.links), policy = candidatePolicyLine(r.data.links);
+      if (applyLinks.length === 0) {
         m.empty.hidden = false;
-        m.empty.textContent = "This employer has marked the posting live but hasn't provided a link to where you can apply. That's their choice to make.";
+        m.empty.textContent = "This employer has marked the opening live but hasn't provided a link to where you can apply. That's their choice to make.";
       } else {
-        for (const l of r.data.links) m.links.append(linkRow(row, l));
-        $("#modalLinksNote").hidden = false;   // why the links look odd, and what to do when one is wrong
+        for (const l of applyLinks) m.links.append(linkRow(row, l));
       }
-      moreLinks(row, r.data.comment_count, r.data.links.length > 0);
+      // prompt LM: when the tile has the AI hiring policy pill (the row says has_policy_link) the policy link is reached from the pill and has no row here; a row without that flag keeps the row, as before
+      const policyRow = policy && row.has_policy_link !== true ? policy : null;
+      if (policyRow) { const pl = $("#modalPolicy"); pl.hidden = false; pl.append(linkRow(row, { position: policyRow.position, kind: "policy", firm: null, label: policyRow.where })); }
+      if (applyLinks.length > 0 || policyRow) { m.head.append(h("h3", { class: "links-heading" }, LINKS_HEADING), linksAboutIcon()); m.head.hidden = false; }   // the heading and the "i" with the one-time link paragraph exist only when the window shows links
+      moreLinks(row, r.data.comment_count, applyLinks.length > 0);
       return;
     }
     moreLinks(row, null, false);   // a closed or expired posting keeps its thread: what happened after it closed is what other candidates want to know
     m.empty.hidden = false;
     if (r.status === 409 && r.data && r.data.code === "posting_not_open") m.empty.textContent = notOpenMessage(r.data.status, r.data.closed_reason || null);
-    else if (r.error.code === "not_found") m.empty.textContent = "This posting is no longer available.";
-    else if (isAuthFailure(r.error)) { closeModal(); session = null; applySession(); showSignIn("Please verify your email again."); }
+    else if (r.error.code === "not_found") m.empty.textContent = "This opening is no longer available.";
+    else if (isAuthFailure(r.error)) { closeModal(); session = null; applySession(); showSignIn("Please confirm your email again."); }
     else if (r.error.code === "rate_limited") { cooldown = r.error.retryAfter || 30; m.empty.textContent = "You are opening details too fast. Try again in " + waitText(cooldown) + "."; }
     else m.empty.textContent = describeError(r.error);
   } finally {
@@ -177,10 +454,11 @@ async function openDetails(row, button) {
 
 // One destination. Clicking asks the server for a fresh single-use link (valid 2 minutes) for THIS candidate and opens it in a new tab.
 // A named recruiter firm (pass C) reads "Recruiter firm: <name>"; when the employer gave no link for it there is nothing to click.
-const rowText = (link) => link.kind === "recruiter" ? "Recruiter firm: " + link.firm + (link.label ? " · " + link.label : "") : (link.label || "Application link " + link.position);
+// The AI and hiring policy link (prompt BA) reads "AI and hiring policy: <where it goes>": the same one-time link as the others, and never an application link.
+const rowText = (link) => link.kind === "recruiter" ? "Recruiter firm: " + link.firm + (link.label ? " · " + link.label : "") : link.kind === "policy" ? POLICY_LINE_LABEL + " " + link.label : (link.label || "Application link " + link.position);
 function linkRow(row, link) {
   if (link.kind === "recruiter" && link.label === null) return h("div", { class: "source-row", style: "cursor:default;" }, h("span", { class: "source-row-label" }, rowText(link)), h("span", { class: "go", style: "color:var(--faint);" }, "No link given"));
-  const go_ = h("span", { class: "go" }, "Continue →");
+  const go_ = h("span", { class: "go" }, openUnit());          // "Open" + the external link icon + "opens in a new tab" for a screen reader (prompt BG): the same on every row that opens a new tab
   const el = h("button", { type: "button", class: "source-row" }, h("span", { class: "source-row-label" }, rowText(link)), go_);
   el.addEventListener("click", async () => {
     if (el.disabled) return;
@@ -196,26 +474,73 @@ function linkRow(row, link) {
       const w = url ? window.open(url, "_blank", "noopener,noreferrer") : null;
       if (w === null && url) {
         // the browser held back the new tab: give a real link the person can click themselves (it stays valid for 2 minutes)
-        el.replaceWith(h("a", { class: "source-row", href: url, target: "_blank", rel: "noopener noreferrer", style: "text-decoration:none;" }, h("span", { class: "source-row-label" }, rowText(link)), h("span", { class: "go" }, "Open link →")));
+        el.replaceWith(h("a", { class: "source-row", href: url, target: "_blank", rel: "noopener noreferrer", style: "text-decoration:none;" }, h("span", { class: "source-row-label" }, rowText(link)), h("span", { class: "go" }, openUnit())));
         return;
       }
       go_.textContent = "Opened ✓";
     } finally {
-      setTimeout(() => { if (el.isConnected) { el.disabled = false; if (go_.textContent !== "Continue →") go_.textContent = "Continue →"; } }, 4000);
+      setTimeout(() => { if (el.isConnected) { el.disabled = false; if (go_.querySelector(".go-open") === null) go_.replaceChildren(openUnit()); } }, 4000);
     }
   });
   return el;
 }
 
+// a search saved before the sign-in link was requested: fill it in and run it (used once: takePending removes it)
+function resumePending() {
+  const p = takePending(localStorage);
+  if (!p) return false;
+  companyIn.value = p.company; queryIn.value = p.q; reqIn.value = p.r; sourceIn.value = p.source || "";   // prompt JD: the saved search brings its source back into the field
+  heldOrigin = p.origin === "site" ? null : { origin: p.origin, host: p.host };   // prompt IA: the search runs with the origin it was asked with (a saved search with none, or a damaged one, is the site); used by this search only
+  runSearch(true);
+  return true;
+}
+
+// ---- a sign-in completed in ANOTHER tab (the emailed link opens in a new tab): this tab moves to the signed-in state by itself, no reload
+// The tab the person is looking at runs the saved search; a background tab only switches state and leaves the saved search for the tab that is in front (normally the one the link opened). When the person
+// comes back to this tab the saved search, if nobody used it, runs then.
+const inFront = () => document.visibilityState !== "hidden" && document.hasFocus();
+function runWhenInFront() {
+  if (inFront()) { resumePending(); return; }
+  const back = () => { if (!inFront()) return; window.removeEventListener("focus", back); document.removeEventListener("visibilitychange", back); resumePending(); };
+  window.addEventListener("focus", back); document.addEventListener("visibilitychange", back);
+}
+let watching = false, stopWatch = null;
+function ensureWatch() { if (watching) return; watching = true; stopWatch = watchOtherTabSignIn(async (s) => { watching = false; stopWatch = null; await becameSignedIn(s); }); }
+// the code typed in this tab was accepted: the Auth client has stored the session, so this is the same state as a sign-in noticed from another tab (the saved search runs; no landing note, nobody came from another tab)
+async function codeDone() {
+  if (stopWatch) { stopWatch(); stopWatch = null; }
+  watching = false;
+  const s = await currentSession();
+  if (!s) { const err = $("#candEmailError"); err.hidden = false; err.textContent = "We could not finish signing you in. Please ask for a new link."; return; }
+  await becameSignedIn(s);
+}
+async function becameSignedIn(s) {
+  session = s;
+  await mountAccount($("#navAccount"));
+  applySession();
+  const err = $("#candEmailError"); err.hidden = true; err.textContent = "";
+  if (STAFF_REQUESTED && session && !staffMode) await detectStaff();
+  if (session && session.isCandidate) runWhenInFront();
+}
+
+// ---- back to this page: the browser can hand it back exactly as it was left (Back from Comments or Report a wrong link: the back/forward cache), results, recap, scroll position and the details window included.
+// That page holds results found for whoever was signed in when it was left. When the person is no longer signed in as a candidate (signed out in another tab, or the session ended) the results, the recap and the details
+// window are dropped and the sign-in card is shown, so results never sit in a signed-out page. A page that is simply loaded (event.persisted false) is the normal start below.
+window.addEventListener("pageshow", async (ev) => {
+  if (!ev.persisted) return;
+  const s = await currentSession();
+  if (s && s.isCandidate) { session = s; return; }
+  closeModal(); clear(resultsEl); countEl.hidden = true; hideRecap(); lastSearch = null; status.clear();
+  session = await mountAccount($("#navAccount"));
+  applySession();
+  if (!session) showSignIn("Please confirm your email to search.");
+});
+
 // ---- start
 (async () => {
   session = await mountAccount($("#navAccount"));
   applySession();
-  // a search saved before the sign-in link was requested: fill it in and run it
-  if (session && session.isCandidate) {
-    try {
-      const p = JSON.parse(sessionStorage.getItem(PENDING_KEY) || "null");
-      if (p && typeof p.company === "string" && typeof p.q === "string") { sessionStorage.removeItem(PENDING_KEY); companyIn.value = p.company; queryIn.value = p.q; reqIn.value = typeof p.r === "string" ? p.r : ""; runSearch(); }
-    } catch { /* nothing pending */ }
-  }
+  if (STAFF_REQUESTED && session) await detectStaff();
+  if (session && session.isCandidate) resumePending();
+  else if (!staffMode) ensureWatch();
 })();

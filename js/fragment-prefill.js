@@ -1,0 +1,88 @@
+// fragment-prefill.js - the search page can be opened with the company and ONE other value in the URL FRAGMENT (October 6, 2026), for example by the FightGhostJobs browser extension:
+//   search.html#c=<company>&p=<postID>     or    #c=<company>&r=<req number>     or    #c=<company>&t=<title>
+// The fragment (after #) is never sent to a server. This module reads it, fills the Company box and the ONE other box, and takes the fragment out of the address bar AT ONCE. It never runs the search:
+// the person presses Search (and, signed out, goes through the same email step as always; nothing about sign-in changes). The req number goes into the req box, which stays hidden as it is today.
+//
+// THE FRAGMENT IS UNTRUSTED INPUT FROM ANY SOURCE (any web page can link to this page). Rules, all checked by tests/fragment-prefill.unit.test.js and tests/fragment-prefill.test.js:
+//   - only the keys c, p, r, t are read; every other key is ignored; a fragment with none of them is not ours and is left exactly as it is (the sign-in link's fragment must reach the Auth client untouched)
+//   - plain text only: the values are put into the boxes with .value, never into the page as HTML, and a value with a control character is refused
+//   - a maximum length per value (company 200, postID 14, req number 100, title 80, the site's own limits) and for the whole fragment; a longer value refuses the whole fragment (nothing is cut, nothing is guessed)
+//   - a key given twice, a bad percent escape, a missing company, or MORE THAN ONE of postID, req number and title (the page takes the req box or the postID/title box, never both) refuses the whole fragment
+//   - a refused fragment fills nothing, and is still removed from the address bar
+
+// prompt BQ (October 12, 2026): a fifth key, k, the KIO ID in its stored form (what the extension sends). k rides with c and t at most: a k with p or r refuses the whole fragment (no req number is ever sent with an ID), a k that is not a
+// KIO ID that passes the check refuses it, and the company is optional (the ID alone drives the search). t is kept in the page's memory ONLY, to say whether the job ad's title differs from the record: the page has one box for the ID
+// and the title words, so the ID goes in that box and t is not shown anywhere. Nothing here is ever sent anywhere by this module, and no email or personal data is read: only c, k and t.
+// prompt IA (November 1, 2026): the key o says where the search came from and is read leniently (a wrong value, an empty one or a second copy is ignored and the search counts as the site): o=e is the browser extension (with the host of the
+// job page in h) and o=m is the phone entry (mobile, which never carries a host: an h that comes with o=m is ignored). Both are only a tag the sender claims, the same as before. requestOrigin turns a read origin into the fields the search
+// request carries, and is also what the saved search of the sign in hand-off is read back through, so a saved origin is checked again the same way. The classic rules (keys, caps, 700 characters, 12 parts) are unchanged; the key x of the phone
+// entry is not handled here.
+import { readKio } from "./kio.js?v=e7fa8336";
+import { cleanHost, originOf, requestOrigin } from "./search-origin.js?v=b0cdfe2e";
+
+export const FRAGMENT_KEYS = { c: "company", p: "postid", r: "req", t: "title", k: "kio" };
+export const FRAGMENT_MAX = { company: 200, postid: 14, req: 100, title: 80, kio: 24 };
+const MAX_TOTAL = 700, MAX_PARTS = 12;
+const hasControl = (s) => Array.from(s).some((ch) => { const c = ch.codePointAt(0); return c < 32 || c === 127 || c === 0x2028 || c === 0x2029; });
+
+// -> { ours: boolean, result: { company, kind: "postid" | "req" | "title", value } | null }
+export function parseSearchFragment(hash) {
+  const raw = String(hash == null ? "" : hash).replace(/^#/, "");
+  const pieces = raw.split("&");
+  const found = new Map(), sent = new Map();
+  let ours = false, bad = raw.length > MAX_TOTAL || pieces.length > MAX_PARTS;
+  for (const piece of pieces.slice(0, MAX_PARTS)) {
+    const eq = piece.indexOf("=");
+    if (eq < 1) continue;
+    const key = piece.slice(0, eq);
+    // prompt HM: o and h say where the search came from (the extension sends o=e and the host of the job page in h). They are read leniently (a wrong value or a second copy is ignored, never a reason to refuse the fragment) and do not
+    // make a fragment "ours" on their own
+    if (key === "o" || key === "h") { if (!sent.has(key)) { try { sent.set(key, decodeURIComponent(piece.slice(eq + 1)).trim()); } catch { /* ignored */ } } continue; }
+    if (!Object.prototype.hasOwnProperty.call(FRAGMENT_KEYS, key)) continue;   // an unknown key (or "__proto__") is ignored
+    ours = true;
+    if (found.has(key)) { bad = true; continue; }
+    let value;
+    try { value = decodeURIComponent(piece.slice(eq + 1)); } catch { bad = true; continue; }
+    if (hasControl(value)) { bad = true; continue; }
+    found.set(key, value.trim());
+  }
+  if (!ours) return { ours: false, result: null };
+  if (bad) return { ours: true, result: null };
+  const oSent = sent.get("o");
+  const origin = oSent === "e" || oSent === "m" ? originOf(oSent, sent.get("h")) : null;   // only a search from the extension (e) or the phone entry (m) carries its origin here; every other search is the site (the page says so itself)
+  if (found.has("k")) {
+    // the KIO ID: c and t are optional; p and r are never accepted with it
+    if (found.has("p") || found.has("r")) return { ours: true, result: null };
+    const cK = found.get("c") || "", tK = found.get("t") || "", kK = found.get("k");
+    if (cK.length > FRAGMENT_MAX.company || tK.length > FRAGMENT_MAX.title || kK === "" || kK.length > FRAGMENT_MAX.kio) return { ours: true, result: null };
+    const read = readKio(kK);
+    // prompt HM: a k that is not a KIO ID that passes the check no longer throws away the company and the title that came with it: it is kept as typed (bad: true), and the search sends it as a failed key with them, so the answer is
+    // the company and title results (the failover). Without a company AND a title there is nothing to fall over to: the whole fragment is refused, as before.
+    if (read.kind !== "kio" && (cK === "" || tK === "")) return { ours: true, result: null };   // nothing to fall over to without BOTH a company and a title: refused whole, as before
+    if (read.kind !== "kio") return { ours: true, result: { company: cK, kind: "kio", value: kK, stored: null, title: tK, bad: true, ...(origin ? { origin } : {}) } };
+    return { ours: true, result: { company: cK, kind: "kio", value: read.display, stored: read.stored, title: tK, ...(origin ? { origin } : {}) } };
+  }
+  const company = found.get("c") || "", seconds = ["p", "r", "t"].filter((k) => found.has(k));
+  if (company === "" || company.length > FRAGMENT_MAX.company || seconds.length !== 1) return { ours: true, result: null };
+  const kind = FRAGMENT_KEYS[seconds[0]], value = found.get(seconds[0]);
+  if (value === "" || value.length > FRAGMENT_MAX[kind]) return { ours: true, result: null };
+  return { ours: true, result: { company, kind, value, ...(origin ? { origin } : {}) } };
+}
+
+// prompt HM, prompt IA: where the search came from. cleanHost, originOf and requestOrigin live in js/search-origin.js (a small file with no imports, so the sign in hand-off can check an origin without loading this reader); they are
+// exported from here as before.
+export { cleanHost, originOf, requestOrigin };
+
+// win: the window; fills the boxes (text only) and removes the fragment from the address bar before anything else happens. -> true when the boxes were filled
+// onKio({ stored, shown, title }): called when the fragment carried a KIO ID, so the page can keep the title words (t) in memory for the mismatch notice; they are never put in a box.
+export function applyFragmentPrefill({ win, companyEl, queryEl, reqEl, onKio, onOrigin }) {
+  const { ours, result } = parseSearchFragment(win.location.hash);
+  if (!ours) return false;
+  try { win.history.replaceState(win.history.state, "", win.location.pathname + win.location.search); } catch { /* the address bar keeps the fragment; the boxes are still filled below */ }
+  if (!result) return false;
+  companyEl.value = result.company;
+  if (result.kind === "req") reqEl.value = result.value; else queryEl.value = result.value;
+  if (result.kind === "kio" && typeof onKio === "function") onKio({ stored: result.stored, shown: result.value, title: result.title, bad: result.bad === true });
+  if (typeof onOrigin === "function") onOrigin(result.origin);   // prompt HM: { origin, host }, kept in memory for the next search only
+  return true;
+}

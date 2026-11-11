@@ -2,9 +2,10 @@
 // this page then works out WHICH kind of session it got and sends the person on. An employer-intent link that did not produce an employer session (the address is not on a roster,
 // or the 10-minute consent window had passed) is explained, never silently treated as a candidate sign-in.
 
-import { api, go, signOut, describeError, posterInfo, forgetLocalState } from "../app.js";
-import { currentSession, takeNext } from "../session.js";
-import { $, h, clear } from "../dom.js";
+import { api, go, signOut, describeError, posterInfo, forgetLocalState } from "../app.js?v=0fdd7197";
+import { currentSession, takeNext } from "../session.js?v=3c599048";
+import { $, h, clear } from "../dom.js?v=5c78a8cd";
+import { markLanded, landingKindForPage } from "../landing-notice.js?v=f37507d8";
 
 const hashError = (() => {
   // read BEFORE the Auth client tidies the fragment away
@@ -22,6 +23,8 @@ const button = (text, fn, cls = "btn btn-ghost") => h("button", { type: "button"
 
 (async () => {
   const { next, kind: askedFor } = (() => { const t = takeNext(""); return { next: t.next, kind: t.kind }; })();
+  // ?via=code: the person typed the emailed code on the sign-in page and was sent here to be taken on (October 6, 2026). Everything below is the same, except the green "You are signed in, you can close this tab" note, which is for a link opened in another tab.
+  const viaCode = new URLSearchParams(location.search).get("via") === "code";
 
   if (hashError) {
     const expired = /expired|invalid|used/i.test(hashError.code + " " + hashError.text);
@@ -33,7 +36,7 @@ const button = (text, fn, cls = "btn btn-ghost") => h("button", { type: "button"
 
   const session = await currentSession();
   if (!session) {
-    say("Nothing to complete here", "This page finishes an email sign-in. Request a sign-in link first.", [link("Employer sign-in", "employer-signin.html"), link("Search postings", "search.html", "btn btn-outline")]);
+    say("Nothing to complete here", "This page finishes an email sign-in. Request a sign-in link first.", [link("Employer sign-in", "employer-signin.html"), link("Search openings", "search.html", "btn btn-outline")]);
     return;
   }
 
@@ -55,16 +58,20 @@ const button = (text, fn, cls = "btn btn-ghost") => h("button", { type: "button"
       return;
     }
     say("Signed in", "Welcome, " + r.data.poster.full_name + ".", []);
+    if (!viaCode) markLanded(sessionStorage, "poster");
     go(next || "register.html");
     return;
   }
 
   // candidate
   if (!session.isCandidate) {
-    say("Signed in, but not as a verified candidate", "This session is an employer session. Sign out to search as a candidate with a different email address.",
+    say("Signed in, but not as a candidate", "This session is an employer session. Sign out to search as a candidate with a different email address.",
       [button("Sign out", async () => { await signOut(); go("search.html"); }), link("Back", "register.html", "btn btn-outline")]);
     return;
   }
-  say("Email verified", "You can search now.", []);
-  go(next || "search.html");
+  // a both-roles address that asked for an employer page: no "Email confirmed / You can search now." flash on the way to an employer page (nothing replaces it). A candidate destination keeps the flash.
+  const dest = next || "search.html", destPage = dest.split("?");
+  if (landingKindForPage("/" + destPage[0], destPage[1] ? "?" + destPage[1] : "") !== "poster") say("Email confirmed", "You can search now.", []);
+  if (!viaCode) markLanded(sessionStorage, "candidate");
+  go(dest);
 })();

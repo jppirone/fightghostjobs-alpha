@@ -7,21 +7,64 @@
 //   * a 2xx answer is checked against the exact shape the page relies on; anything else is reported as { ok:false, error:{ code:"bad_response" } } (fail closed: a backend change must be noticed, not rendered);
 //   * the session's access token goes in the Authorization header, the publishable key in apikey; the identity is NEVER sent in a body (the backend refuses poster_id / organization_id and reads who you are from the token).
 
+import { PLACE_FIELD } from "./place-text.js?v=cb5d7506";
+import { POST_ID_RE, isKioShown } from "./kio.js?v=e7fa8336";
+import { intentOptionsOk, INTENT_CODES } from "./intent-statement.js?v=d37f2b4b";
+import { MAX_APPLY_LINKS, MAX_RECRUITER_FIRMS } from "./link-pills.js?v=89324475";
+import { MAX_COMMENT_COUNT } from "./tile-actions.js?v=7180edbf";
+// prompt LK (October 23, 2026): the COUNTS of the links an opening has, for the tile (apply_link_count 0 to 10, recruiter_firm_count 0 to 3), both present or both absent (an answer from before the database change); a
+// well formed whole number, nothing else. destination_links_exclusive, when present, is a boolean (the details answer has carried it for a long time). No address, no token: only these numbers are read.
+const linkCountFieldsOk = (r) => (r.apply_link_count === undefined && r.recruiter_firm_count === undefined)
+  || (Number.isInteger(r.apply_link_count) && r.apply_link_count >= 0 && r.apply_link_count <= MAX_APPLY_LINKS && Number.isInteger(r.recruiter_firm_count) && r.recruiter_firm_count >= 0 && r.recruiter_firm_count <= MAX_RECRUITER_FIRMS);
+const exclusiveFlagOk = (r) => r.destination_links_exclusive === undefined || typeof r.destination_links_exclusive === "boolean";
+// prompt LM (October 23, 2026): two more optional values of a search row, from the same database function as the link counts: comment_count (how many visible comments the opening has, a whole number) and has_policy_link
+// (a boolean: the employer set an AI and hiring policy link candidates may be shown). Absent = an answer from before the database change. Counts and a flag only: no address, no token.
+const commentCountFieldOk = (r) => r.comment_count === undefined || (Number.isInteger(r.comment_count) && r.comment_count >= 0 && r.comment_count <= MAX_COMMENT_COUNT);
+const policyFlagOk = (r) => r.has_policy_link === undefined || typeof r.has_policy_link === "boolean";
+// prompt ST1: the employer's optional statement of the kind of an opening. A search row carries the finished sentence (or null); the editor's posting carries the code and the day. Absent = an answer from before the
+// database change. The sentence is plain text of at most 300 characters; the code is one of the four; the day is YYYY-MM-DD.
+const intentLineOk = (r) => r.intent_line === undefined || r.intent_line === null || (typeof r.intent_line === "string" && r.intent_line.length <= 300);
+const intentFieldsOk = (p) => (p.intent_statement === undefined || p.intent_statement === null || INTENT_CODES.includes(p.intent_statement))
+  && (p.intent_date === undefined || p.intent_date === null || (typeof p.intent_date === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(p.intent_date)));
+// the typed place of an opening (prompt BH): absent, null or text of 1 to 200 characters (the table holds board text up to 200); never read for anything but display
+const placeFieldOk = (p) => p[PLACE_FIELD] === undefined || p[PLACE_FIELD] === null || (typeof p[PLACE_FIELD] === "string" && p[PLACE_FIELD].length >= 1 && p[PLACE_FIELD].length <= 200);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REF_RE = /^[0-9a-hjkmnp-tv-z]{20}$/;
 const MASK_RE = /^\*{4}-\*{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 // the masked req number: at most 3 leading characters, a fixed block of four stars, at most 2 trailing characters (the full number is never sent to a candidate)
 const MASKED_REQ_RE = /^.{0,3}[*]{4}.{0,2}$/;
 const isStr = (v) => typeof v === "string";
+// prompt HM (October 31, 2026): a search answer may carry failover { reason, tried_key } (candidate-search, prompt HL): the ID or the req number failed and the company and title were searched instead. Absent = an ordinary answer.
+// Present = exactly one of the four reasons with the key it belongs to (the three ID reasons: kio; a req number that matched nothing: req); anything else fails the whole answer (fail closed).
+const failoverOk = (f) => f === undefined || (f !== null && typeof f === "object" && !Array.isArray(f) && ((["id_invalid", "id_not_registered", "id_gone"].includes(f.reason) && f.tried_key === "kio") || (f.reason === "req_no_match" && f.tried_key === "req")));
 const isBool = (v) => typeof v === "boolean";
 const isNullable = (v, t) => v === null || t(v);
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// how many entries of each kind a set of links may hold: ten application links (a row without a kind is one), three named recruiter firms and one AI and hiring policy link (prompt BA)
+const linkCountsOk = (links) => { const n = { apply: 0, recruiter: 0, policy: 0 }; for (const l of links) n[l && l.kind === "recruiter" ? "recruiter" : l && l.kind === "policy" ? "policy" : "apply"]++; return n.apply <= 10 && n.recruiter <= 3 && n.policy <= 1; };
 
+// the staff search scope (October 8, 2026): the only keys one row of the staff answer may carry. A row with any other key is refused whole (fail closed: no posting reference, no id, no description, no address can ride along).
+const STAFF_ROW_KEYS = ["ai_filtering", "ai_interview_other", "applicant_cap", "closed_reason", "closes_at", "company_name", "go_live_at", "is_remote", "locations", "opening_id", "organization_name", "posted_at", "req_number", "status", "stored_status", "third_party_recruiter", "title"];
+// October 9, 2026: an 18th key, is_registered (a plain boolean, the database's answer to "does this organization have an active paid plan, or a pilot plan with an expiry date"), is allowed and nothing else. A row without it (an answer from before the database change) is still accepted.
+// October 9, 2026 (prompt AZ3): a 19th key, source_location_text, the place as the employer's job board gave it (or null). Display only, read ONLY by js/place.js; a row from before the database change has neither optional key.
+const STAFF_ROW_OPTIONAL_KEYS = ["is_registered", "source_location_text"];
 export const AUTH_FAILURE_CODES = ["unauthorized", "reverification_required", "no_candidate_identity", "not_a_candidate_session", "invalid_verification_time", "no_session"];
 export const isAuthFailure = (err) => !!err && AUTH_FAILURE_CODES.includes(err.code);
 
-const POSTING_STATUSES = ["draft", "live", "paused", "expired", "closed", "flagged"];
+// the six reason codes the contest-comment function accepts (exact, lower case); the labels live in comments-model.js, and tests/contest.test.js keeps the two lists equal
+export const CONTEST_CATEGORY_CODES = ["inaccurate", "closed_or_outdated", "confidential_or_personal", "not_about_posting", "abusive", "other"];
+
+// where a comment's contest stands, as both comment readers report it
+export const CONTEST_STATES = ["none", "open", "left", "removed"];
+
+const POSTING_STATUSES =["draft", "live", "paused", "expired", "closed", "flagged"];
 const EFFECTIVE_STATUSES = POSTING_STATUSES.concat(["scheduled"]);      // what the employer's views report: a draft that carries a go-live time reads "scheduled" (never a stored status)
+
+// item 4: the only keys an answer about stored links may carry (an address is none of them)
+const LINK_ROW_KEYS = ["position", "kind", "firm", "label", "shown_as", "check_status", "check_http"];
+const LINK_OP_KEYS = ["posting_id", "kind", "op", "position", "changed", "active_links", "links"];
+// a one-time ticket link: an https address with no user name or password in it
+function isHttpsTicket(v) { try { const u = new URL(v); return u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === ""; } catch { return false; } }
 
 // ---- response shapes (exactly what the pages read)
 export const shapes = {
@@ -31,38 +74,80 @@ export const shapes = {
   aiNotes: (r) => (r.ai_filtering_note === undefined || (isNullable(r.ai_filtering_note, isStr) && (r.ai_filtering_note === null || r.ai_filtering_note.length <= 300)))
     && (r.ai_interview_note === undefined || (isNullable(r.ai_interview_note, isStr) && (r.ai_interview_note === null || r.ai_interview_note.length <= 300))),
   posterSession: (d) => isObj(d) && isObj(d.poster) && UUID_RE.test(d.poster.poster_id) && isStr(d.poster.full_name) && isBool(d.poster.is_org_admin) && isObj(d.organization) && isStr(d.organization.name) && isStr(d.verified_at) && (d.plan === undefined || shapes.plan(d.plan)),
-  posting: (d) => isObj(d) && UUID_RE.test(d.id) && isStr(d.status) && isStr(d.title) && isStr(d.expiration_date) && /^[0-9A-Z]{12}$/.test(d.public_code) && REF_RE.test(d.posting_ref) && isNullable(d.closed_reason, isStr),
+  posting: (d) => isObj(d) && UUID_RE.test(d.id) && isStr(d.status) && isStr(d.title) && isStr(d.expiration_date) && POST_ID_RE.test(d.public_code) && REF_RE.test(d.posting_ref) && isNullable(d.closed_reason, isStr),
   searchRow: (r) => isObj(r) && isStr(r.company_name) && isStr(r.title) && Array.isArray(r.locations) && r.locations.every(isStr) && isBool(r.is_remote) && isStr(r.posted_at) && isStr(r.closes_at)
     && isNullable(r.applicant_cap, Number.isInteger) && isStr(r.status) && isNullable(r.closed_reason, isStr) && isNullable(r.ai_filtering, isBool) && isNullable(r.ai_interview_other, isBool) && isBool(r.ai_disclosure_shown)
     && shapes.aiNotes(r)
-    && isBool(r.third_party_recruiter) && MASK_RE.test(r.masked_code) && isNullable(r.masked_req, (v) => isStr(v) && MASKED_REQ_RE.test(v)) && REF_RE.test(r.posting_ref) && isNullable(r.last_edited_at, isStr),
-  search: (d) => isObj(d) && (d.mode === "phrase" || d.mode === "code" || d.mode === "req") && isBool(d.truncated) && Array.isArray(d.results) && d.results.length <= 25 && d.results.every(shapes.searchRow),
-  detail: (d) => isObj(d) && isObj(d.posting) && shapes.searchRow(Object.assign({ }, d.posting)) && (d.comment_count === undefined || (Number.isInteger(d.comment_count) && d.comment_count >= 0)) && Array.isArray(d.links) && d.links.length <= 13
-    && d.links.every((l) => isObj(l) && Number.isInteger(l.position) && l.position >= 1 && l.position <= 10 && isNullable(l.label, isStr) && (l.kind === undefined || l.kind === "apply" || l.kind === "recruiter") && (l.firm === undefined || isNullable(l.firm, isStr)) && (l.kind !== "recruiter" || isStr(l.firm))),
-  linkIssue: (d) => isObj(d) && isStr(d.expires_at) && Array.isArray(d.links) && d.links.every((l) => isObj(l) && Number.isInteger(l.position) && isNullable(l.label, isStr) && isStr(l.go_url) && /^https:\/\//.test(l.go_url) && (l.kind === undefined || l.kind === "apply" || l.kind === "recruiter")),
-  // a comment as a candidate or the owner reads it: an id (to report it), the text, the time; never an author. A page is at most 25, newest first.
-  commentItem: (c) => isObj(c) && Number.isInteger(c.id) && c.id > 0 && isStr(c.body) && isStr(c.created_at),
+    && isBool(r.third_party_recruiter) && MASK_RE.test(r.masked_code) && isNullable(r.masked_req, (v) => isStr(v) && MASKED_REQ_RE.test(v)) && REF_RE.test(r.posting_ref) && isNullable(r.last_edited_at, isStr)
+    // prompt BQ (October 12, 2026): the whole KIO ID (null or absent from an answer of before the database change) and, for a lookup by ID, when it closed or expired
+    && (r.kio_id === undefined || isNullable(r.kio_id, isKioShown)) && (r.closed_at === undefined || isNullable(r.closed_at, isStr)) && intentLineOk(r) && linkCountFieldsOk(r) && exclusiveFlagOk(r) && commentCountFieldOk(r) && policyFlagOk(r),
+  // one row of the staff-scope answer (staff_search_openings): every status, exact keys only
+  staffRow: (r) => isObj(r) && Object.keys(r).every((k) => STAFF_ROW_KEYS.includes(k) || STAFF_ROW_OPTIONAL_KEYS.includes(k)) && STAFF_ROW_KEYS.every((k) => Object.hasOwn(r, k))   // is_registered is read by js/registered.js (only a boolean true draws the mark; any other value is not registered), so its value is not judged here
+    && isStr(r.company_name) && isStr(r.organization_name) && isStr(r.title) && Array.isArray(r.locations) && r.locations.every(isStr) && isBool(r.is_remote)
+    && POSTING_STATUSES.includes(r.status) && POSTING_STATUSES.includes(r.stored_status) && isNullable(r.closed_reason, isStr) && isNullable(r.posted_at, isStr) && isNullable(r.closes_at, isStr) && isNullable(r.go_live_at, isStr)
+    && isNullable(r.applicant_cap, Number.isInteger) && isNullable(r.ai_filtering, isBool) && isNullable(r.ai_interview_other, isBool) && isBool(r.third_party_recruiter)
+    && isStr(r.opening_id) && /^(?:KIO-)?[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(r.opening_id) && isNullable(r.req_number, isStr),
+  staffSearch: (d) => isObj(d) && (d.mode === "phrase" || d.mode === "code" || d.mode === "req") && isBool(d.truncated) && Array.isArray(d.results) && d.results.length <= 25 && d.results.every(shapes.staffRow) && Object.keys(d).length === 3,
+  // prompt IV (November 6, 2026): the staff page "Companies to invite". One row per company the system does not know (exactly the nine keys public.staff_invite_list returns), and one row per typed title (exactly the four keys of public.staff_invite_list_titles).
+  // Nothing else is accepted: an extra key, a missing key or a wrong type is a broken answer and the page shows its plain error line instead of the data.
+  inviteRow: (r) => isObj(r) && Object.keys(r).length === 9 && isStr(r.company) && isStr(r.company_key) && Number.isInteger(r.searches) && r.searches >= 0 && Number.isInteger(r.different_people) && r.different_people >= 0 && isBool(r.people_exact)
+    && isStr(r.first_month) && isStr(r.last_month) && isStr(r.months_seen) && isNullable(r.status, isStr),
+  inviteList: (d) => Array.isArray(d) && d.length <= 20000 && d.every(shapes.inviteRow),
+  inviteTitleRow: (r) => isObj(r) && Object.keys(r).length === 4 && isStr(r.company) && isStr(r.company_key) && isStr(r.title) && Number.isInteger(r.searches) && r.searches >= 0,
+  inviteTitles: (d) => Array.isArray(d) && d.length <= 20000 && d.every(shapes.inviteTitleRow),
+  search: (d) => isObj(d) && (d.mode === "phrase" || d.mode === "code" || d.mode === "req" || d.mode === "kio") && (d.mismatch === undefined || isBool(d.mismatch)) && failoverOk(d.failover) && isBool(d.truncated) && Array.isArray(d.results) && d.results.length <= 25 && d.results.every(shapes.searchRow),
+  // prompt BA (October 10, 2026): up to ten application links, three named recruiter firms and ONE entry of kind "policy" (the employer's AI and hiring policy link: position 1, a label saying where it goes, never a firm)
+  detail: (d) => isObj(d) && isObj(d.posting) && shapes.searchRow(Object.assign({ }, d.posting)) && (d.comment_count === undefined || (Number.isInteger(d.comment_count) && d.comment_count >= 0)) && Array.isArray(d.links) && d.links.length <= 14 && linkCountsOk(d.links)
+    && d.links.every((l) => isObj(l) && Number.isInteger(l.position) && l.position >= 1 && l.position <= 10 && isNullable(l.label, isStr) && (l.kind === undefined || l.kind === "apply" || l.kind === "recruiter" || l.kind === "policy") && (l.firm === undefined || isNullable(l.firm, isStr)) && (l.kind !== "recruiter" || isStr(l.firm))
+      && (l.kind !== "policy" || (l.position === 1 && isStr(l.label) && (l.firm === undefined || l.firm === null)))),
+  linkIssue: (d) => isObj(d) && isStr(d.expires_at) && Array.isArray(d.links) && d.links.every((l) => isObj(l) && Number.isInteger(l.position) && isNullable(l.label, isStr) && isStr(l.go_url) && /^https:\/\//.test(l.go_url) && (l.kind === undefined || l.kind === "apply" || l.kind === "recruiter" || l.kind === "policy")),
+  // a comment as a candidate or the owner reads it: an id (to report it), the text, the time, whether a contest on it is open; never an author. A page is at most 25, newest first.
+  // the contest keys are always present (item A): contested (boolean), contest_state ('none' | 'open' | 'left' | 'removed') and contest_filed_at (an ISO timestamp string once any contest exists on the comment, else null).
+  // 'none' exactly when filed_at is null; contested exactly when the state is 'open'. A missing, mistyped, unknown or inconsistent value is a broken answer, never "no contest" (fail closed: a contested comment must never be shown without its notice).
+  contestFields: (c) => isBool(c.contested) && CONTEST_STATES.includes(c.contest_state) && isNullable(c.contest_filed_at, (v) => isStr(v) && Number.isFinite(Date.parse(v)))
+    && (c.contest_state === "none") === (c.contest_filed_at === null) && c.contested === (c.contest_state === "open"),
+  commentItem: (c) => isObj(c) && Number.isInteger(c.id) && c.id > 0 && isStr(c.body) && isStr(c.created_at) && shapes.contestFields(c),
   comments: (d) => isObj(d) && Number.isInteger(d.total) && d.total >= 0 && Array.isArray(d.comments) && d.comments.length <= 25 && d.comments.every(shapes.commentItem) && isNullable(d.next_offset, Number.isInteger),
   employerComments: (d) => isObj(d) && UUID_RE.test(d.posting_id) && shapes.comments(d),
+  // contest-comment (item A): exactly { ok:true, contest:{ id, status:"open", filed_at } }; nothing else is read
+  contestAnswer: (d) => isObj(d) && d.ok === true && isObj(d.contest) && UUID_RE.test(d.contest.id) && d.contest.status === "open" && isStr(d.contest.filed_at),
   reportAnswer: (d) => isObj(d) && Number.isInteger(d.report_id) && d.report_id > 0,
   // list-my-postings (the employer's own list): every field the dashboard reads, checked; anything else is ignored
-  myPosting: (p) => isObj(p) && UUID_RE.test(p.id) && isStr(p.title) && isNullable(p.req_number, isStr) && /^[0-9A-Z]{12}$/.test(p.post_id) && EFFECTIVE_STATUSES.includes(p.status) && POSTING_STATUSES.includes(p.stored_status)
-    && isNullable(p.closed_reason, isStr) && isBool(p.is_remote) && Array.isArray(p.locations) && p.locations.every(isStr) && Array.isArray(p.location_ids) && p.location_ids.every(isStr) && isBool(p.locations_attested)
+  myPosting: (p) => isObj(p) && UUID_RE.test(p.id) && isStr(p.title) && isNullable(p.req_number, isStr) && POST_ID_RE.test(p.post_id) && EFFECTIVE_STATUSES.includes(p.status) && POSTING_STATUSES.includes(p.stored_status)
+    && isNullable(p.closed_reason, isStr) && isBool(p.is_remote) && Array.isArray(p.locations) && p.locations.every(isStr) && Array.isArray(p.location_ids) && p.location_ids.every(isStr) && isBool(p.locations_attested) && placeFieldOk(p)
     && Number.isInteger(p.window_days) && isNullable(p.posted_at, isStr) && isNullable(p.expiration_date, isStr) && isNullable(p.publish_by, isStr) && isNullable(p.go_live_at, isStr) && isNullable(p.applicant_cap, Number.isInteger)
-    && isBool(p.bump_used) && isNullable(p.bump_days, Number.isInteger) && isStr(p.created_at) && isNullable(p.last_edited_at, isStr) && Number.isInteger(p.comment_count) && p.comment_count >= 0,
+    && isBool(p.bump_used) && isNullable(p.bump_days, Number.isInteger) && isStr(p.created_at) && isNullable(p.last_edited_at, isStr) && Number.isInteger(p.comment_count) && p.comment_count >= 0
+    && (p.closed_at === undefined || isNullable(p.closed_at, isStr)),    // prompt BR: the day a closed opening was closed, read when the server sends it (null or absent: the row reads "Closed" with no date)
   myPostings: (d) => isObj(d) && Number.isInteger(d.total) && d.total >= 0 && Array.isArray(d.postings) && d.postings.length <= 50 && d.postings.every(shapes.myPosting) && isNullable(d.next_offset, Number.isInteger),
   // get-my-posting (one posting, for the edit page): the fields the form starts from, checked; recent_changes: the newest five log entries (when, note, kind, the NAMES of the fields; never values)
-  openPosting: (p) => isObj(p) && UUID_RE.test(p.id) && isStr(p.title) && isNullable(p.req_number, isStr) && isStr(p.company_name) && /^[0-9A-Z]{12}$/.test(p.post_id) && EFFECTIVE_STATUSES.includes(p.status) && POSTING_STATUSES.includes(p.stored_status)
-    && isNullable(p.closed_reason, isStr) && isBool(p.is_remote) && Array.isArray(p.locations) && p.locations.every(isStr) && Array.isArray(p.location_ids) && p.location_ids.every(isStr) && isBool(p.locations_attested)
+  openPosting: (p) => isObj(p) && UUID_RE.test(p.id) && isStr(p.title) && isNullable(p.req_number, isStr) && isStr(p.company_name) && POST_ID_RE.test(p.post_id) && EFFECTIVE_STATUSES.includes(p.status) && POSTING_STATUSES.includes(p.stored_status)
+    && isNullable(p.closed_reason, isStr) && isBool(p.is_remote) && Array.isArray(p.locations) && p.locations.every(isStr) && Array.isArray(p.location_ids) && p.location_ids.every(isStr) && isBool(p.locations_attested) && placeFieldOk(p)
     && isNullable(p.ai_filtering, isBool) && isNullable(p.ai_interview_other, isBool) && shapes.aiNotes(p) && isBool(p.third_party_recruiter) && isBool(p.req_searchable) && isBool(p.destination_links_exclusive) && isNullable(p.applicant_cap, Number.isInteger) && isStr(p.description_text) && Number.isInteger(p.window_days)
-    && isNullable(p.posted_at, isStr) && isNullable(p.expiration_date, isStr) && isNullable(p.publish_by, isStr) && isNullable(p.go_live_at, isStr) && isStr(p.created_at) && isNullable(p.last_edited_at, isStr),
+    && isNullable(p.posted_at, isStr) && isNullable(p.expiration_date, isStr) && isNullable(p.publish_by, isStr) && isNullable(p.go_live_at, isStr) && isStr(p.created_at) && isNullable(p.last_edited_at, isStr) && intentFieldsOk(p),
+  // prompt ST1: the choices the employer's pages offer (the database's wording table): [{ code, label, meaning, needs_date }], in order
+  intentOptions: (d) => intentOptionsOk(d),
   // the destination links the employer stored: position and label only, NEVER the address (the server keeps that encrypted and does not send it back)
   // pass B: a stored link may also say what candidates see for it (shown_as: derived from where it goes, never from the label; null for a firm without a link) and how the liveness check went when it was saved.
   // pass C: kind 'apply' (an application link, up to 10) or 'recruiter' (a named recruiter firm, up to 3; firm = its name, a link optional)
   linkExtras: (x) => (x.shown_as === undefined || isNullable(x.shown_as, isStr)) && (x.check_status === undefined || x.check_status === null || ["ok", "failed", "skipped"].includes(x.check_status)) && (x.check_http === undefined || x.check_http === null || Number.isInteger(x.check_http))
-    && (x.kind === undefined || x.kind === "apply" || x.kind === "recruiter") && (x.firm === undefined || isNullable(x.firm, isStr)) && (x.kind !== "recruiter" || isStr(x.firm)),
-  storedLinks: (l) => Array.isArray(l) && l.length <= 13 && l.every((x) => isObj(x) && Number.isInteger(x.position) && x.position >= 1 && x.position <= 10 && isNullable(x.label, isStr) && shapes.linkExtras(x)),
+    && (x.kind === undefined || x.kind === "apply" || x.kind === "recruiter" || x.kind === "policy") && (x.firm === undefined || isNullable(x.firm, isStr)) && (x.kind !== "recruiter" || isStr(x.firm))
+    && (x.kind !== "policy" || (x.position === 1 && (x.firm === undefined || x.firm === null))),   // prompt BA: kind "policy" (the AI and hiring policy link): always position 1, never a firm
+  storedLinks: (l) => Array.isArray(l) && l.length <= 14 && l.every((x) => isObj(x) && Number.isInteger(x.position) && x.position >= 1 && x.position <= 10 && isNullable(x.label, isStr) && shapes.linkExtras(x)) && linkCountsOk(l),
   linksAnswer: (d) => isObj(d) && Number.isInteger(d.active_links) && shapes.storedLinks(d.links),
+  // the answer of saving or removing the policy link (kind "policy"): zero or one stored entry, of that kind, at position 1
+  policyAnswer: (d) => shapes.linksAnswer(d) && d.kind === "policy" && typeof d.changed === "boolean" && d.active_links === d.links.length && d.links.length <= 1 && d.links.every((x) => x.kind === "policy" && x.position === 1),
+  // item 4 (Destination links panel). Check link: EXACTLY { go_url, expires_at }: go_url is an opaque one-time https ticket link (no credentials in it), never an address; any other key makes it a broken answer.
+  checkIssue: (d) => isObj(d) && Object.keys(d).length === 2 && isStr(d.go_url) && isHttpsTicket(d.go_url) && isStr(d.expires_at) && Number.isFinite(Date.parse(d.expires_at)),
+  // item 4: the answer of an edit or a remove of ONE link: the stored links after the change, by their STORED positions (ascending, gaps allowed), each with only the five fields the panel reads; an unknown key anywhere
+  // (an address would be one) makes it a broken answer. firm is null for an application link.
+  linkRow: (l) => isObj(l) && Object.keys(l).every((k) => LINK_ROW_KEYS.includes(k)) && Number.isInteger(l.position) && l.position >= 1 && l.position <= 10 && (l.kind === undefined || l.kind === "apply") && (l.firm === undefined || l.firm === null)
+    && isNullable(l.label, isStr) && shapes.linkExtras(l),
+  linkOpAnswer: (d) => isObj(d) && Object.keys(d).every((k) => LINK_OP_KEYS.includes(k)) && UUID_RE.test(d.posting_id) && d.kind === "apply" && (d.op === "edit" || d.op === "remove") && Number.isInteger(d.position) && d.position >= 1 && d.position <= 10 && isBool(d.changed)
+    && Number.isInteger(d.active_links) && Array.isArray(d.links) && d.links.length <= 10 && d.links.length === d.active_links && d.links.every(shapes.linkRow) && d.links.every((l, i) => i === 0 || d.links[i - 1].position < l.position),
+  // prompt BC (October 10, 2026): the answer of an edit or a remove of ONE recruiter firm: the firms after the change by their stored positions (1 to 3, ascending, gaps allowed), each with only the seven fields a stored link carries
+  firmRow: (l) => isObj(l) && Object.keys(l).every((k) => LINK_ROW_KEYS.includes(k)) && Number.isInteger(l.position) && l.position >= 1 && l.position <= 3 && l.kind === "recruiter" && isStr(l.firm) && l.label === null && shapes.linkExtras(l),
+  firmOpAnswer: (d) => isObj(d) && Object.keys(d).every((k) => LINK_OP_KEYS.includes(k)) && UUID_RE.test(d.posting_id) && d.kind === "recruiter" && (d.op === "edit" || d.op === "remove" || d.op === "add") && Number.isInteger(d.position) && d.position >= 1 && d.position <= 3 && isBool(d.changed)
+    && Number.isInteger(d.active_links) && Array.isArray(d.links) && d.links.length <= 3 && d.links.length === d.active_links && d.links.every(shapes.firmRow) && d.links.every((l, i) => i === 0 || d.links[i - 1].position < l.position),
   openAnswer: (d) => isObj(d) && shapes.openPosting(d.posting) && shapes.storedLinks(d.destination_links) && shapes.plan(d.plan) && Array.isArray(d.recent_changes) && d.recent_changes.length <= 5
     && d.recent_changes.every((c) => isObj(c) && isStr(c.at) && isStr(c.note) && isNullable(c.kind, isStr) && Array.isArray(c.fields) && c.fields.every(isStr)),
   // schedule-posting: whether anything changed, the go-live time now stored (null = removed) and the resulting status
@@ -119,6 +204,24 @@ export function createApi({ baseUrl, key, getToken, fetchImpl }) {
     return { ok: false, status: res.status, data, error: { code, message: data && isStr(data.error) ? data.error : null, field: data && isStr(data.field) ? data.field : null, errors, retryAfter: Number.isFinite(ra) && ra > 0 ? ra : null } };
   }
 
+  // the staff scope calls go to the database directly (PostgREST rpc), with the signed-in person's own token: the database function decides who is staff. ANY refusal, missing function or odd answer is reported as a plain
+  // { ok:false }: the page then does exactly what it does for everyone else. Nothing is sent but the search words; nothing is stored; the request is never cached.
+  async function rpc(fn, body, { validate } = {}) {
+    const token = await getToken();
+    if (!token) return { ok: false, status: 401, error: { code: "no_session" } };
+    let res, text;
+    try {
+      res = await doFetch(baseUrl + "/rest/v1/rpc/" + fn, { method: "POST", headers: { "Content-Type": "application/json", apikey: key, Authorization: "Bearer " + token }, body: JSON.stringify(body === undefined ? {} : body), cache: "no-store" });
+      text = await res.text();
+    } catch {
+      return { ok: false, status: 0, error: { code: "network" } };
+    }
+    if (!res.ok) return { ok: false, status: res.status, error: { code: "refused" } };
+    let data; try { data = JSON.parse(text); } catch { return { ok: false, status: res.status, error: { code: "bad_response" } }; }
+    if (validate && !validate(data)) return { ok: false, status: res.status, error: { code: "bad_response" } };
+    return { ok: true, status: res.status, data };
+  }
+
   const postingAnswer = (d) => shapes.posting(d && isObj(d.posting) ? d.posting : d);
   const unwrap = (r) => (r.ok && isObj(r.data) && isObj(r.data.posting) && !r.data.id ? Object.assign({}, r, { data: r.data.posting }) : r);
 
@@ -141,6 +244,57 @@ export function createApi({ baseUrl, key, getToken, fetchImpl }) {
     setDestinationLinks: (postingId, links) => call("set-destination-links", { posting_id: postingId, links }, { validate: shapes.linksAnswer }),
     // replaces the posting's whole set of named recruiter firms (verified plan, and only while the posting says a recruiter is involved): [{ name, url? }], 0 to 3; [] removes them all
     setRecruiterFirms: (postingId, firms) => call("set-destination-links", { posting_id: postingId, kind: "recruiter", links: firms }, { validate: shapes.linksAnswer }),
+    // the AI and hiring policy link (prompt BA, October 10, 2026): ONE address, or null to remove it. Verified plan only (the server decides). It is stored like a destination link (write-only, checked when saved) and is never an application destination.
+    setPolicyLink: (postingId, url) => call("set-destination-links", { posting_id: postingId, kind: "policy", links: url === null ? [] : [{ url }] }, { validate: shapes.policyAnswer }),
+    // item 4, the rows panel. All three work on ONE application link, named by its stored position (1 to 10); the poster comes from the session only, never from here; no address is ever sent back.
+    // check: asks for a one-time ticket link (60 seconds, single use) the page opens in a new tab: { go_url, expires_at }
+    checkDestinationLink: async (postingId, position) => {
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 10) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      return call("check-destination-link", { posting_id: postingId, position }, { validate: shapes.checkIssue });
+    },
+    // edit: change = { url?, label? }: a blank or missing url keeps the stored address; label absent keeps the label, null clears it, a string sets it. At least one of the two is required.
+    editDestinationLink: async (postingId, position, change) => {
+      const c = isObj(change) ? change : {}, hasUrl = isStr(c.url) && c.url.trim() !== "", hasLabel = "label" in c && (c.label === null || isStr(c.label));
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 10 || !(hasUrl || hasLabel) || (c.url !== undefined && !isStr(c.url))) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      const body = { posting_id: postingId, kind: "apply", op: "edit", position };
+      if (hasUrl) body.url = c.url.trim();
+      if (hasLabel) body.label = c.label;
+      return call("set-destination-links", body, { validate: (d) => shapes.linkOpAnswer(d) && d.op === "edit" && d.position === position && d.posting_id.toLowerCase() === postingId.toLowerCase() });
+    },
+    removeDestinationLink: async (postingId, position) => {
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 10) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      return call("set-destination-links", { posting_id: postingId, kind: "apply", op: "remove", position }, { validate: (d) => shapes.linkOpAnswer(d) && d.op === "remove" && d.position === position && d.posting_id.toLowerCase() === postingId.toLowerCase() });
+    },
+    // prompt BC: the same three one-row actions for ONE named recruiter firm (position 1 to 3), and Check link for the AI and hiring policy link (position 1). The poster comes from the session only; no address is ever sent back.
+    checkRecruiterFirm: async (postingId, position) => {
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 3) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      return call("check-destination-link", { posting_id: postingId, kind: "recruiter", position }, { validate: shapes.checkIssue });
+    },
+    // change = { url?, name? }: a blank or missing url keeps the stored address; name absent keeps the name. At least one of the two is required.
+    editRecruiterFirm: async (postingId, position, change) => {
+      const c = isObj(change) ? change : {}, hasUrl = isStr(c.url) && c.url.trim() !== "", hasName = isStr(c.name) && c.name.trim() !== "";
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 3 || !(hasUrl || hasName) || (c.url !== undefined && !isStr(c.url)) || (c.name !== undefined && !isStr(c.name))) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      const body = { posting_id: postingId, kind: "recruiter", op: "edit", position };
+      if (hasUrl) body.url = c.url.trim();
+      if (hasName) body.name = c.name.trim();
+      return call("set-destination-links", body, { validate: (d) => shapes.firmOpAnswer(d) && d.op === "edit" && d.position === position && d.posting_id.toLowerCase() === postingId.toLowerCase() });
+    },
+    // prompt BG (October 10, 2026): add ONE firm without replacing the others. change = { name, url? }: the name is required, a blank or missing address means a firm named without an address. The server picks the position (the lowest free one of 1 to 3).
+    addRecruiterFirm: async (postingId, change) => {
+      const c = isObj(change) ? change : {}, hasUrl = isStr(c.url) && c.url.trim() !== "";
+      if (!UUID_RE.test(postingId) || !isStr(c.name) || c.name.trim() === "" || (c.url !== undefined && c.url !== null && !isStr(c.url))) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      const body = { posting_id: postingId, kind: "recruiter", op: "add", name: c.name.trim() };
+      if (hasUrl) body.url = c.url.trim();
+      return call("set-destination-links", body, { validate: (d) => shapes.firmOpAnswer(d) && d.op === "add" && d.changed === true && d.posting_id.toLowerCase() === postingId.toLowerCase() });
+    },
+    removeRecruiterFirm: async (postingId, position) => {
+      if (!UUID_RE.test(postingId) || !Number.isInteger(position) || position < 1 || position > 3) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      return call("set-destination-links", { posting_id: postingId, kind: "recruiter", op: "remove", position }, { validate: (d) => shapes.firmOpAnswer(d) && d.op === "remove" && d.position === position && d.posting_id.toLowerCase() === postingId.toLowerCase() });
+    },
+    checkPolicyLink: async (postingId) => {
+      if (!UUID_RE.test(postingId)) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      return call("check-destination-link", { posting_id: postingId, kind: "policy", position: 1 }, { validate: shapes.checkIssue });
+    },
     listMyPostings: (offset) => call("list-my-postings", offset ? { offset } : {}, { validate: shapes.myPostings }),
     // the caller's own six analytics metrics over [from, to) (pass 24); from/to are ISO-8601 instants. The organization is taken server-side from the signed-in session, never sent here.
     employerAnalytics: (from, to) => call("employer-analytics", { from, to }, { validate: shapes.analytics }),
@@ -151,6 +305,14 @@ export function createApi({ baseUrl, key, getToken, fetchImpl }) {
     publishPosting: async (postingId) => unwrap(await call("publish-posting", { posting_id: postingId }, { validate: postingAnswer })),
     // ---- candidate side
     candidateSession: () => call("candidate-session", {}),
+    // ---- staff scope (only a signed-in staff person gets anything; the database decides)
+    // prompt ST1: the kinds of opening the employer may state, with the employer's labels (PostgREST rpc with the poster's own token; any refusal or odd answer is { ok:false } and the page then offers the spec's wording)
+    intentOptions: () => rpc("intent_statement_options", {}, { validate: shapes.intentOptions }),
+    isStaff: () => rpc("is_staff", {}, { validate: isBool }),
+    staffSearch: (q) => rpc("staff_search_openings", q, { validate: shapes.staffSearch }),
+    // prompt IV: the staff page "Companies to invite". Both ask the database with the person's own token; the database checks is_staff() first. q = { p_from, p_to, p_company, p_min_searches }
+    staffInviteList: (q) => rpc("staff_invite_list", q, { validate: shapes.inviteList }),
+    staffInviteListTitles: (q) => rpc("staff_invite_list_titles", q, { validate: shapes.inviteTitles }),
     candidateSearch: (q) => call("candidate-search", q, { validate: shapes.search }),
     candidateDetail: (postingRef) => call("candidate-posting-detail", { posting_ref: postingRef }, { validate: shapes.detail }),
     candidateLinkIssue: (postingRef) => call("candidate-link-issue", { posting_ref: postingRef }, { validate: shapes.linkIssue }),
@@ -161,6 +323,14 @@ export function createApi({ baseUrl, key, getToken, fetchImpl }) {
     candidateReportLink: (postingRef, kind, position, detail) => call("candidate-report-link", Object.assign({ posting_ref: postingRef, detail }, kind ? { kind, position } : {}), { validate: shapes.reportAnswer }),
     // the owner reads the comments on their own posting (read-only; the same anonymous items)
     employerListComments: (postingId, offset) => call("list-posting-comments", offset ? { posting_id: postingId, offset } : { posting_id: postingId }, { validate: shapes.employerComments }),
+    // the owner contests ONE comment on their own posting (item A). The body is exactly { comment_id, category, explanation }: who is asking comes only from the session token, never from here.
+    // A request that is not well formed is refused here without a network call. On a refusal, the server's numbers are copied onto the error as integers (min and max for explanation_length, limit for limit_open / limit_month).
+    contestComment: async (commentId, category, explanation) => {
+      if (!Number.isInteger(commentId) || commentId < 1 || !CONTEST_CATEGORY_CODES.includes(category) || !isStr(explanation)) return { ok: false, status: 0, error: { code: "invalid_request" } };
+      const r = await call("contest-comment", { comment_id: commentId, category, explanation }, { validate: shapes.contestAnswer });
+      if (!r.ok && isObj(r.data)) for (const k of ["min", "max", "limit"]) if (Number.isInteger(r.data[k]) && r.data[k] > 0) r.error[k] = r.data[k];
+      return r;
+    },
   };
 }
 
@@ -173,10 +343,11 @@ export function describeError(err, { what = "That" } = {}) {
     case "bad_response": return "The server answered in a way this page did not expect, so nothing was shown. Please try again, and tell us if it keeps happening.";
     case "server_error": return "The server had a problem. Nothing was changed; please try again in a moment.";
     case "unauthorized": case "no_session": return "Please sign in again.";
-    case "reverification_required": return "Your email verification has expired. Please verify your email again.";
-    case "no_candidate_identity": case "not_a_candidate_session": return "This page needs a verified candidate session.";
+    case "reverification_required": return "Your email confirmation has expired. Please confirm your email again.";
+    case "no_candidate_identity": case "not_a_candidate_session": return "This page needs a candidate sign-in.";
     case "not_found": return what + " could not be found.";
     case "body_too_large": return "That is too large to send.";
+    case "invalid_request": return "That could not be sent. Check what you entered and try again.";
     default: return err.message ? String(err.message).slice(0, 200) : what + " was refused.";
   }
 }
