@@ -449,3 +449,13 @@ select{min-height:24px}
   .sort-box select{flex:1 1 auto;min-width:0;min-height:44px}
 }
 @media (max-width:360px){.rtable td{grid-template-columns:92px minmax(0,1fr)}}
+/* Shortcut band (prompt ND, November 15, 2026): a thin line above the header, the same words and look as the band on the marketing pages. Not sticky, not fixed: it scrolls away with the page.
+   It has one control, "Don't show again" (js/shortcut-band.js). The hidden attribute wins over the flex display. */
+.sc-band{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 16px;background:var(--ink);color:#fff;padding:8px 20px;box-sizing:border-box;font-size:15px;line-height:1.45;text-align:center}
+.sc-band[hidden]{display:none}
+.sc-band-text{margin:0}
+.sc-band a{color:#fff;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.sc-band a:hover{color:#fff;text-decoration-thickness:2px}
+.sc-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:32px;cursor:pointer}
+.sc-band-close:hover{background:rgba(255,255,255,.14)}
+.sc-band a:focus-visible,.sc-band-close:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:3px}
