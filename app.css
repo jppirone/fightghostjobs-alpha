@@ -376,6 +376,17 @@ select{min-height:24px}
 .srch-or::before,.srch-or::after{content:"";flex:1;width:1px;min-height:10px;background:var(--line)}
 @media (max-width:999px){.srch-company{margin-top:0}.srch-group{flex:none!important}.srch-pair{flex-direction:column!important}.srch-or{flex-direction:row;padding:0 12px}.srch-or::before,.srch-or::after{width:auto;min-height:0;height:1px}}
 
+/* Shortcut band (prompt ND, November 15, 2026): a thin line above the header, the same words and look as the band on the marketing pages. Not sticky, not fixed: it scrolls away with the page.
+   It has one control, "Don't show again" (js/shortcut-band.js). The hidden attribute wins over the flex display. It sits before the phone block below, which may only hold phone width rules (rule S48). */
+.sc-band{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 16px;background:var(--ink);color:#fff;padding:8px 20px;box-sizing:border-box;font-size:15px;line-height:1.45;text-align:center}
+.sc-band[hidden]{display:none}
+.sc-band-text{margin:0}
+.sc-band a{color:#fff;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.sc-band a:hover{color:#fff;text-decoration-thickness:2px}
+.sc-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:32px;cursor:pointer}
+.sc-band-close:hover{background:rgba(255,255,255,.14)}
+.sc-band a:focus-visible,.sc-band-close:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:3px}
+
 /* phone layout for the pages themselves (October 4, 2026). The pages were desktop designs: 64 pixel side padding on every section, 28 pixel padding inside every card (a card's content got about 190 of 375 pixels)
    and every two-column layout stayed two columns. At 640 pixels and below: pages use 16 pixel sides, cards 16 pixel inside, two columns stack, side-by-side fields go one per row, tables become one card per row,
    buttons and links are 44 pixel targets, and form text is 16 pixels (a phone browser zooms the page when a smaller field is focused). Above 640 pixels nothing here applies.
@@ -449,13 +460,3 @@ select{min-height:24px}
   .sort-box select{flex:1 1 auto;min-width:0;min-height:44px}
 }
 @media (max-width:360px){.rtable td{grid-template-columns:92px minmax(0,1fr)}}
-/* Shortcut band (prompt ND, November 15, 2026): a thin line above the header, the same words and look as the band on the marketing pages. Not sticky, not fixed: it scrolls away with the page.
-   It has one control, "Don't show again" (js/shortcut-band.js). The hidden attribute wins over the flex display. */
-.sc-band{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 16px;background:var(--ink);color:#fff;padding:8px 20px;box-sizing:border-box;font-size:15px;line-height:1.45;text-align:center}
-.sc-band[hidden]{display:none}
-.sc-band-text{margin:0}
-.sc-band a{color:#fff;font-weight:600;text-decoration:underline;text-underline-offset:2px}
-.sc-band a:hover{color:#fff;text-decoration-thickness:2px}
-.sc-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:32px;cursor:pointer}
-.sc-band-close:hover{background:rgba(255,255,255,.14)}
-.sc-band a:focus-visible,.sc-band-close:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:3px}
