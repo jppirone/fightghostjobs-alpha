@@ -383,7 +383,7 @@ select{min-height:24px}
 .sc-band-text{margin:0}
 .sc-band a{color:#fff;font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .sc-band a:hover{color:#fff;text-decoration-thickness:2px}
-.sc-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:32px;cursor:pointer}
+.sc-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:44px;cursor:pointer}
 .sc-band-close:hover{background:rgba(255,255,255,.14)}
 .sc-band a:focus-visible,.sc-band-close:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:3px}
 
@@ -397,6 +397,7 @@ select{min-height:24px}
 .ext-band-close{font:inherit;font-size:14px;line-height:1.2;color:#fff;background:transparent;border:1px solid #fff;border-radius:6px;padding:6px 12px;min-height:44px;cursor:pointer}
 .ext-band-close:hover{background:rgba(255,255,255,.14)}
 .ext-band a:focus-visible,.ext-band-close:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:3px}
+@media (max-width:640px){.ext-band{display:none}}
 
 /* phone layout for the pages themselves (October 4, 2026). The pages were desktop designs: 64 pixel side padding on every section, 28 pixel padding inside every card (a card's content got about 190 of 375 pixels)
    and every two-column layout stayed two columns. At 640 pixels and below: pages use 16 pixel sides, cards 16 pixel inside, two columns stack, side-by-side fields go one per row, tables become one card per row,
